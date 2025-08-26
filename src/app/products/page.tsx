@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Product } from '@/types';
-import { getProducts } from '@/lib/db';
+import { getMockProducts } from '@/lib/mockData';
 import ProductCard from '@/components/products/ProductCard';
 import { useCart } from '@/hooks/useCart';
 import { Search, Filter } from 'lucide-react';
@@ -18,7 +18,8 @@ export default function ProductsPage() {
   useEffect(() => {
     const fetchProducts = async () => {
       try {
-        const productsData = await getProducts();
+        // Using mock data for now - replace with getProducts() when Firebase is configured
+        const productsData = await getMockProducts();
         setProducts(productsData);
         setFilteredProducts(productsData);
       } catch (error) {

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Product, Order } from '@/types';
-import { getProducts, getOrders } from '@/lib/db';
+import { getMockProducts } from '@/lib/mockData';
 import Button from '@/components/ui/Button';
 import { Plus, Package, ShoppingCart, Users } from 'lucide-react';
 
@@ -15,12 +15,10 @@ export default function AdminPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [productsData, ordersData] = await Promise.all([
-          getProducts(),
-          getOrders()
-        ]);
+        // Using mock data for now - replace with actual Firebase calls when configured
+        const productsData = await getMockProducts();
         setProducts(productsData);
-        setOrders(ordersData);
+        setOrders([]); // No mock orders for now
       } catch (error) {
         console.error('Error fetching data:', error);
       } finally {
