@@ -1,22 +1,20 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Products - read for all, write for authenticated admin
-    match /products/{productId} {
-      allow read: if true;
-      allow write: if request.auth != null && request.auth.token.admin == true;
+    // Single role: anyone whose Google email is an active document in /staff
+    // can read and write everything. There is no finer-grained access by design.
+    function staffDoc() {
+      return get(/databases/$(database)/documents/staff/$(request.auth.token.email.lower()));
     }
-    
-    // Orders - read/write for authenticated users (own orders)
-    match /orders/{orderId} {
-      allow read, write: if request.auth != null && 
-        request.auth.uid == resource.data.userId;
+    function isStaff() {
+      return request.auth != null
+        && request.auth.token.email != null
+        && exists(/databases/$(database)/documents/staff/$(request.auth.token.email.lower()))
+        && staffDoc().data.active == true;
     }
-    
-    // Users - read/write own data
-    match /users/{userId} {
-      allow read, write: if request.auth != null && 
-        request.auth.uid == userId;
+
+    match /{document=**} {
+      allow read, write: if isStaff();
     }
   }
 }

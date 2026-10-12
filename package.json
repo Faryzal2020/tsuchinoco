@@ -1,16 +1,16 @@
 {
-  "name": "ecommerce-store",
+  "name": "tsuchinoco-ops",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "functions:build": "npm --prefix functions run build"
   },
   "dependencies": {
-    "@stripe/stripe-js": "^7.9.0",
-    "@types/uuid": "^10.0.0",
     "clsx": "^2.1.1",
     "firebase": "^12.1.0",
     "lucide-react": "^0.541.0",
@@ -18,7 +18,7 @@
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "tailwind-merge": "^3.3.1",
-    "uuid": "^11.1.0"
+    "papaparse": "^5.5.2"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
@@ -29,6 +29,7 @@
     "eslint": "^9",
     "eslint-config-next": "15.5.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "@types/papaparse": "^5.3.15"
   }
 }

@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# functions
+/functions/node_modules
+/functions/lib
+/functions/.secret.local

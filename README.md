@@ -1,250 +1,89 @@
-# Tsuchinoco E-commerce Store
+# Tsuchinoco Ops
 
-A modern, full-featured e-commerce website built with Next.js, TypeScript, Tailwind CSS, Firebase, and Stripe.
+Staff-only tool that replaces the circle's Google Sheets for the catalogue, stock, event preorders, production planning, and post-event wrap-up.
 
-## Features
+- **Catalogue** of items with variants and bundles, one product manager per item.
+- **Stock** as a ledger of movements, with committed and available quantities across events.
+- **Events** with numbered preorder batches. A batch defines what is on offer and generates its own JotForm; submissions arrive automatically as orders.
+- **Planning** computes net units to order per variant from preorders, on-site extra, available stock, and incoming production.
+- **Wrap-up** turns the post-event count into walk-in sales and stock movements, with bundle revenue handled.
+- **Report** per event: revenue by channel, units produced, sold, left.
 
-- 🛍️ **Product Catalog** - Browse and search products with category filtering
-- 🛒 **Shopping Cart** - Add/remove items with quantity controls
-- 💳 **Checkout System** - Complete order forms with customer information
-- 👨‍💼 **Admin Panel** - Manage products and view orders
-- 🔥 **Firebase Integration** - Real-time database and authentication
-- 💰 **Stripe Integration** - Secure payment processing
-- 📱 **Responsive Design** - Mobile-first approach with Tailwind CSS
-- ⚡ **Performance** - Built with Next.js 15 and optimized for speed
+The full design is in [docs/DATA-MODEL.md](docs/DATA-MODEL.md). Deploying is in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-## Tech Stack
+## Stack
 
-- **Frontend**: Next.js 15, TypeScript, Tailwind CSS
-- **Backend**: Firebase (Firestore, Auth, Storage)
-- **Payments**: Stripe
-- **State Management**: React Hooks with localStorage persistence
-- **Icons**: Lucide React
-- **Deployment**: Firebase Hosting (static export)
+| Layer | Choice |
+| --- | --- |
+| Web app | Next.js 15 (App Router, static export), React 19, TypeScript, Tailwind CSS 4 |
+| Data | Cloud Firestore, read directly from the browser with offline persistence |
+| Auth | Firebase Auth, Google sign-in, allowlist in the `staff` collection |
+| Server | Cloud Functions v2 (Node 20) for JotForm form generation and submission import |
+| Hosting | Firebase Hosting serving the static `out/` folder |
 
-## Prerequisites
+There is no backend API of our own. Firestore security rules allow any active staff member to read and write everything; the functions exist only because JotForm needs a server-side API key and a webhook target.
 
-Before you begin, ensure you have the following installed:
-- Node.js (v18 or higher)
-- npm or yarn
-- Git
-
-## Quick Start
-
-### 1. Clone and Install
+## Local development
 
 ```bash
-# Clone the repository
-git clone <your-repo-url>
-cd ecommerce-store
-
-# Install dependencies
+cp env.template .env.local     # fill in the Firebase web app values
 npm install
+npm run dev                    # http://localhost:3000
 ```
 
-### 2. Environment Setup
+The app talks to the real Firebase project named in `.env.local`. For the first sign-in to work, your Google email must exist as an active document in the `staff` collection (see the deployment guide, step 6).
 
-Copy the environment template and fill in your credentials:
+JotForm features (generate form, re-sync, re-import, test connection) call deployed Cloud Functions. They need the functions deployed with the `JOTFORM_API_KEY` secret, or the functions emulator running with that secret set locally.
 
-```bash
-# Copy the template
-cp env.template .env.local
+### Scripts
 
-# Edit .env.local with your actual values
-```
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Next.js dev server with Turbopack |
+| `npm run build` | Static export to `out/` |
+| `npm run typecheck` | TypeScript check of the web app |
+| `npm run lint` | ESLint |
+| `npm run functions:build` | Compile the Cloud Functions to `functions/lib` |
 
-**Required Environment Variables:**
-
-```env
-# Firebase Configuration
-NEXT_PUBLIC_FIREBASE_API_KEY=your_api_key
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=your_project_id
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your_project.appspot.com
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
-NEXT_PUBLIC_FIREBASE_APP_ID=your_app_id
-
-# Stripe Configuration
-NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_...
-STRIPE_SECRET_KEY=sk_test_...
-```
-
-### 3. Firebase Setup
-
-1. Go to [Firebase Console](https://console.firebase.google.com/)
-2. Create a new project or select existing one
-3. Enable these services:
-   - **Authentication**: Email/Password provider
-   - **Firestore Database**: Start in test mode
-   - **Storage**: Default settings
-   - **Hosting**: Initialize later
-
-4. Get your configuration:
-   - Go to Project Settings → General → Your apps
-   - Add a web app (if not exists)
-   - Copy the config values to `.env.local`
-
-5. Update Firebase project ID:
-   ```bash
-   # Edit .firebaserc
-   {
-     "projects": {
-       "default": "your-actual-project-id"
-     }
-   }
-   ```
-
-### 4. Stripe Setup
-
-1. Create a [Stripe account](https://stripe.com/)
-2. Get API keys from Dashboard → Developers → API Keys
-3. Add keys to `.env.local`
-
-### 5. Run Development Server
-
-```bash
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) to view the store.
-
-## Project Structure
+## Project layout
 
 ```
 src/
-├── app/                    # Next.js App Router
-│   ├── admin/             # Admin panel routes
-│   ├── cart/              # Shopping cart
-│   ├── checkout/          # Checkout process
-│   ├── products/          # Product catalog
-│   └── api/               # API routes
-├── components/             # React components
-│   ├── ui/                # Reusable UI components
-│   ├── admin/             # Admin-specific components
-│   ├── cart/              # Cart components
-│   └── products/          # Product components
-├── hooks/                  # Custom React hooks
-├── lib/                    # Utility libraries
-└── types/                  # TypeScript type definitions
+  app/                 Routes (static export, so ids live in the query string: /events/view/?id=…)
+    page.tsx           Dashboard
+    events/            List and event view with tabs
+    catalog/           Items, item editor, CSV import
+    stock/             Overview, stock take, movement ledger
+    settings/          Staff allowlist, item types, defaults, JotForm check
+  components/
+    ui/                Buttons, fields, pills, tables, dialogs, toasts
+    event/             One component per event tab, plus order modals
+    AppShell.tsx       Sign-in gate, top bar, event switcher, "my items" toggle
+  lib/
+    firebase.ts        SDK init with offline cache
+    auth.tsx           Auth state + staff allowlist check
+    data.tsx           Live Firestore subscriptions (DataProvider) and useEventOrders
+    repo.ts            All Firestore writes
+    compute.ts         Stock, planning, wrap-up, and report arithmetic (spec section 4)
+    bundle.ts          Bundle price allocation and line expansion
+    csv.ts, format.ts, keys.ts, prefs.tsx, useQuery.tsx
+  types/index.ts       Domain types
+functions/src/
+  index.ts             Callables (generateForm, syncForm, setFormStatus, reimportBatch, jotformStatus) and the webhook
+  jotform.ts           Minimal JotForm REST client
+  bundle.ts            Copy of the allocation rules for server-side import
+firestore.rules        Single staff-allowlist rule
+firebase.json          Hosting, functions, emulators
 ```
 
-## Development
+## Conventions
 
-### Adding Products
+- Prices and totals are whole integers in the circle's currency (set in Settings).
+- A variant is addressed everywhere as `itemId` + `variantId`; as a map key it is `itemId:variantId`. Items without variants use the hidden variant `default`.
+- Stock movements are append-only. Undo is a reversal movement, never a delete.
+- Orders store the price at order time. Changing an item's price never rewrites history.
+- Every write goes through `src/lib/repo.ts` and stamps `updatedAt` / `updatedBy`.
 
-Currently, products need to be added manually to Firebase Firestore. The structure should be:
+## Design
 
-```typescript
-{
-  name: "Product Name",
-  description: "Product description",
-  price: 2999, // Price in cents
-  imageUrl: "https://example.com/image.jpg",
-  category: "electronics",
-  stock: 10,
-  createdAt: Timestamp.now()
-}
-```
-
-### Customizing Styles
-
-The project uses Tailwind CSS for styling. You can customize:
-- Colors in `tailwind.config.js`
-- Global styles in `src/app/globals.css`
-- Component-specific styles in individual component files
-
-### Adding New Features
-
-1. **New Pages**: Create new directories in `src/app/`
-2. **New Components**: Add to appropriate `src/components/` subdirectory
-3. **New Hooks**: Create in `src/hooks/`
-4. **New Types**: Extend `src/types/index.ts`
-
-## Deployment
-
-### Firebase Hosting
-
-1. Install Firebase CLI:
-   ```bash
-   npm install -g firebase-tools
-   ```
-
-2. Login to Firebase:
-   ```bash
-   firebase login
-   ```
-
-3. Build and deploy:
-   ```bash
-   # Build for production
-   npm run build
-
-   # Deploy to Firebase
-   firebase deploy
-   ```
-
-### Vercel (Alternative)
-
-1. Push your code to GitHub
-2. Connect your repository to Vercel
-3. Add environment variables in Vercel dashboard
-4. Deploy automatically on push
-
-## Security
-
-### Firestore Rules
-
-The project includes basic security rules in `firestore.rules`:
-- Products: Read for all, write for authenticated admins
-- Orders: Read/write for authenticated users (own orders)
-- Users: Read/write own data
-
-### Storage Rules
-
-Storage rules in `storage.rules`:
-- Product images: Read for all, write for admins
-- User uploads: Read/write for own files
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## Troubleshooting
-
-### Common Issues
-
-**Build Errors:**
-- Ensure all environment variables are set
-- Check Firebase configuration
-- Verify all dependencies are installed
-
-**Database Connection:**
-- Check Firestore rules allow operations
-- Verify Firebase config in production
-- Ensure project ID matches
-
-**Payment Issues:**
-- Verify Stripe keys are correct
-- Check Stripe webhook configuration
-- Ensure test mode is enabled for development
-
-### Getting Help
-
-- Check the [Firebase documentation](https://firebase.google.com/docs)
-- Review [Stripe documentation](https://stripe.com/docs)
-- Open an issue in this repository
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- Built with [Next.js](https://nextjs.org/)
-- Styled with [Tailwind CSS](https://tailwindcss.com/)
-- Powered by [Firebase](https://firebase.google.com/)
-- Payments by [Stripe](https://stripe.com/)
+Bright, cream-dominant interface with yellow and blue as minor accents. Buttons are tactile (solid border with a bottom shadow that compresses on press). Icons are avoided in favour of text labels. Tokens live at the top of `src/app/globals.css`.

@@ -1,37 +1,33 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
-import Header from "@/components/ui/Header";
+import type { Metadata } from 'next';
+import { Plus_Jakarta_Sans, Geist_Mono } from 'next/font/google';
+import './globals.css';
+import { AuthProvider } from '@/lib/auth';
+import { DataProvider } from '@/lib/data';
+import { PrefsProvider } from '@/lib/prefs';
+import { ToastProvider } from '@/components/ui/Toast';
+import AppShell from '@/components/AppShell';
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+const jakarta = Plus_Jakarta_Sans({ variable: '--font-jakarta', subsets: ['latin'], weight: ['400', '600', '700'] });
+const geistMono = Geist_Mono({ variable: '--font-geist-mono', subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: "Tsuchinoco - E-commerce Store",
-  description: "Your one-stop shop for amazing products",
+  title: 'Tsuchinoco Ops',
+  description: 'Stock, preorders, planning, and wrap-up for the circle.',
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gray-50`}
-      >
-        <Header />
-        <main className="min-h-screen">
-          {children}
-        </main>
+      <body className={`${jakarta.variable} ${geistMono.variable}`}>
+        <ToastProvider>
+          <AuthProvider>
+            <DataProvider>
+              <PrefsProvider>
+                <AppShell>{children}</AppShell>
+              </PrefsProvider>
+            </DataProvider>
+          </AuthProvider>
+        </ToastProvider>
       </body>
     </html>
   );
