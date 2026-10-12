@@ -18,7 +18,7 @@ export default function OverviewTab({ event, batches, orders }: TabProps) {
   const { settings, wrapups } = useData();
   const { run } = useToast();
   const [edit, setEdit] = useState(false);
-  const [d, setD] = useState({ name: event.name, startDate: event.startDate, endDate: event.endDate, venue: event.venue, notes: event.notes, pickupDeadlineDays: String(event.pickupDeadlineDays) });
+  const [d, setD] = useState({ name: event.name, code: event.code ?? '', startDate: event.startDate, endDate: event.endDate, venue: event.venue, notes: event.notes, pickupDeadlineDays: String(event.pickupDeadlineDays) });
   const [busy, setBusy] = useState(false);
 
   const live = orders.filter((o) => o.status !== 'cancelled');
@@ -29,7 +29,7 @@ export default function OverviewTab({ event, batches, orders }: TabProps) {
 
   const save = async () => {
     setBusy(true);
-    const ok = await run(() => eventRepo.patch(event.id, { ...d, name: d.name.trim(), pickupDeadlineDays: Math.max(1, Number(d.pickupDeadlineDays) || settings.pickupDeadlineDays) }, me), 'Event saved');
+    const ok = await run(() => eventRepo.patch(event.id, { ...d, name: d.name.trim(), code: d.code.trim().toUpperCase(), pickupDeadlineDays: Math.max(1, Number(d.pickupDeadlineDays) || settings.pickupDeadlineDays) }, me), 'Event saved');
     setBusy(false);
     if (ok) setEdit(false);
   };
@@ -94,6 +94,7 @@ export default function OverviewTab({ event, batches, orders }: TabProps) {
       <Modal open={edit} onClose={() => setEdit(false)} title="Edit event" footer={<><Button onClick={() => setEdit(false)}>Cancel</Button><Button variant="primary" onClick={save} busy={busy} disabled={!d.name.trim()}>Save</Button></>}>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Name" className="sm:col-span-2"><Input value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} /></Field>
+          <Field label="Code" hint="Used in order IDs, e.g. CF23_1_0002"><Input value={d.code} onChange={(e) => setD({ ...d, code: e.target.value.toUpperCase() })} placeholder="CF23" /></Field>
           <Field label="First day"><Input type="date" value={d.startDate} onChange={(e) => setD({ ...d, startDate: e.target.value })} /></Field>
           <Field label="Last day"><Input type="date" value={d.endDate} onChange={(e) => setD({ ...d, endDate: e.target.value })} /></Field>
           <Field label="Venue and booth" className="sm:col-span-2"><Input value={d.venue} onChange={(e) => setD({ ...d, venue: e.target.value })} /></Field>

@@ -8,7 +8,7 @@ import { collection, doc, onSnapshot, query, where, type DocumentData, type Quer
 import { db } from './firebase';
 import { COL } from './repo';
 import { useAuth } from './auth';
-import type { Batch, Event, Item, Order, Settings, Staff, StockMovement, Wrapup } from '@/types';
+import type { Batch, Event, FormDoc, Item, Order, PublicForm, Settings, Staff, StockMovement, Submission, Wrapup } from '@/types';
 import { DEFAULT_SETTINGS, OPEN_ORDER_STATUSES } from '@/types';
 
 interface Data {
@@ -21,6 +21,12 @@ interface Data {
   openOrders: Order[];
   movements: StockMovement[];
   wrapups: Wrapup[];
+  forms: FormDoc[];
+  formsById: Map<string, FormDoc>;
+  publicForms: PublicForm[];
+  publicFormsById: Map<string, PublicForm>;
+  /** Submissions that are not yet orders: status new or rejected. */
+  submissions: Submission[];
   settings: Settings;
   staffName: (id: string) => string;
 }
@@ -41,6 +47,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [openOrders, setOpenOrders] = useState<Order[]>([]);
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [wrapups, setWrapups] = useState<Wrapup[]>([]);
+  const [forms, setForms] = useState<FormDoc[]>([]);
+  const [publicForms, setPublicForms] = useState<PublicForm[]>([]);
+  const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [loadedCount, setLoadedCount] = useState(0);
 
@@ -56,6 +65,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       onSnapshot(query(collection(db, COL.orders), where('status', 'in', OPEN_ORDER_STATUSES)), (s) => { setOpenOrders(rowsOf<Order>(s)); bump(); }, log('openOrders')),
       onSnapshot(collection(db, COL.movements), (s) => { setMovements(rowsOf<StockMovement>(s)); bump(); }, log('movements')),
       onSnapshot(collection(db, COL.wrapups), (s) => { setWrapups(rowsOf<Wrapup>(s)); bump(); }, log('wrapups')),
+      onSnapshot(collection(db, COL.forms), (s) => { setForms(rowsOf<FormDoc>(s)); bump(); }, log('forms')),
+      onSnapshot(collection(db, COL.publicForms), (s) => { setPublicForms(rowsOf<PublicForm>(s)); bump(); }, log('publicForms')),
+      onSnapshot(query(collection(db, COL.submissions), where('status', 'in', ['new', 'rejected'])), (s) => { setSubmissions(rowsOf<Submission>(s)); bump(); }, log('submissions')),
       onSnapshot(doc(db, COL.settings, 'global'), (s) => { setSettings(s.exists() ? { ...DEFAULT_SETTINGS, ...(s.data() as Partial<Settings>) } : DEFAULT_SETTINGS); bump(); }, log('settings')),
     ];
     return () => { unsubs.forEach((u) => u()); setLoadedCount(0); };
@@ -65,7 +77,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     const itemsById = new Map(items.map((i) => [i.id, i]));
     const staffById = new Map(staff.map((s) => [s.id, s]));
     return {
-      loaded: loadedCount >= 8,
+      loaded: loadedCount >= 11,
       staff: [...staff].sort((a, b) => a.displayName.localeCompare(b.displayName)),
       items: [...items].sort((a, b) => a.name.localeCompare(b.name)),
       itemsById,
@@ -74,10 +86,15 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       openOrders,
       movements: [...movements].sort((a, b) => b.createdAt - a.createdAt),
       wrapups,
+      forms,
+      formsById: new Map(forms.map((f) => [f.id, f])),
+      publicForms,
+      publicFormsById: new Map(publicForms.map((f) => [f.id, f])),
+      submissions: [...submissions].sort((a, b) => a.submittedAt - b.submittedAt),
       settings,
       staffName: (id: string) => staffById.get(id)?.displayName || id,
     };
-  }, [staff, items, events, batches, openOrders, movements, wrapups, settings, loadedCount]);
+  }, [staff, items, events, batches, openOrders, movements, wrapups, forms, publicForms, submissions, settings, loadedCount]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -101,5 +118,23 @@ export function useEventOrders(eventId: string | undefined): { orders: Order[]; 
       (e) => { console.error('[data] eventOrders', e); setLoaded(true); },
     );
   }, [eventId]);
+  return { orders, loaded };
+}
+
+/** Live orders for several events (all statuses). Firestore allows up to 30 ids in one `in` query. */
+export function useOrdersForEvents(eventIds: string[]): { orders: Order[]; loaded: boolean } {
+  const key = eventIds.slice(0, 30).sort().join(',');
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    const ids = key ? key.split(',') : [];
+    if (ids.length === 0) { setOrders([]); setLoaded(true); return; }
+    setLoaded(false);
+    return onSnapshot(
+      query(collection(db, COL.orders), where('eventId', 'in', ids)),
+      (s) => { setOrders(rowsOf<Order>(s).sort((a, b) => b.submittedAt - a.submittedAt)); setLoaded(true); },
+      (e) => { console.error('[data] ordersForEvents', e); setLoaded(true); },
+    );
+  }, [key]);
   return { orders, loaded };
 }

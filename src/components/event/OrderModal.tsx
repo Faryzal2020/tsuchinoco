@@ -63,12 +63,14 @@ export default function OrderModal({ order: o, event, onClose }: { order: Order 
               Not collected at {event.name}. Returns to stock {o.returnToStockBy ? formatDate(o.returnToStockBy) : 'date not set'}{isPastIso(o.returnToStockBy) && ' (overdue)'}. Contact the buyer for shipping, add their address, then mark shipped, or cancel.
             </div>
           )}
+          {o.transactionId && <Kv k="Order ID" v={<span className="mono text-sm">{o.transactionId}</span>} />}
           <Kv k="Submitted" v={formatDateTime(o.submittedAt)} />
+          {o.pickupDay && <Kv k="Pickup day" v={o.pickupDay} />}
           <Kv k="Total" v={formatMoney(o.total, settings.currency)} />
           {o.collectedAt && <Kv k="Collected" v={formatDateTime(o.collectedAt)} />}
           {o.shippedAt && <Kv k="Shipped" v={formatDateTime(o.shippedAt)} />}
           {o.cancelledAt && <Kv k="Cancelled" v={formatDateTime(o.cancelledAt)} />}
-          {o.externalId && <Kv k="JotForm ID" v={<span className="mono text-xs">{o.externalId}</span>} />}
+          {o.externalId && <Kv k={o.source === 'jotform' ? 'JotForm ID' : 'Submission'} v={<span className="mono text-xs">{o.externalId}</span>} />}
 
           <h3 className="font-bold mt-4 mb-1">Lines</h3>
           <table className="w-full text-sm">

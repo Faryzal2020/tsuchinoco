@@ -7,17 +7,20 @@ import {
   getDoc,
   getDocs,
   query,
+  runTransaction,
   setDoc,
   updateDoc,
   where,
   writeBatch,
   type DocumentData,
+  type Transaction,
   type WithFieldValue,
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { newId } from './keys';
+import { transactionId } from './forms';
 import type {
-  Batch, Event, Item, Order, OrderStatus, Settings, Staff, StockMovement, Wrapup,
+  Batch, Counter, Event, FormDoc, Item, Media, Order, OrderStatus, PublicForm, Settings, Staff, StockMovement, Submission, Wrapup,
 } from '@/types';
 
 export const COL = {
@@ -29,6 +32,12 @@ export const COL = {
   movements: 'stockMovements',
   wrapups: 'wrapups',
   settings: 'settings',
+  media: 'media',
+  forms: 'forms',
+  publicForms: 'publicForms',
+  submissions: 'submissions',
+  counters: 'counters',
+  templates: 'formTemplates',
 } as const;
 
 type Meta = { createdAt: number; updatedAt: number; updatedBy: string };
@@ -111,9 +120,34 @@ export const batchRepo = {
     updateDoc(doc(db, COL.batches, id), new FieldPath('planning', key, field), value, new FieldPath('updatedAt'), Date.now(), new FieldPath('updatedBy'), by),
 };
 
+// ---- Sequential order IDs ----
+
+/**
+ * Inside a transaction: take the next sequence number of the batch and return the
+ * `<eventcode>_<batch>_<seq>` id. Reads must happen before any write in the same transaction,
+ * so call this before writing anything else.
+ */
+export async function allocateTransactionId(tx: Transaction, batch: Batch, event: Event): Promise<string> {
+  const ref = doc(db, COL.counters, batch.id);
+  const snap = await tx.get(ref);
+  const next = snap.exists() ? Number((snap.data() as Omit<Counter, 'id'>).next) || 1 : 1;
+  tx.set(ref, { next: next + 1 });
+  return transactionId(event, batch, next);
+}
+
 // ---- Orders ----
 export const orderRepo = {
   create: (data: Omit<Order, 'id' | keyof Meta>, by: string) => create<Order>(COL.orders, data, by),
+  /** Create an order with the next sequential transaction id of its batch. */
+  createNumbered: async (data: Omit<Order, 'id' | keyof Meta | 'transactionId'>, batch: Batch, event: Event, by: string): Promise<{ id: string; transactionId: string }> => {
+    const id = newId();
+    const tid = await runTransaction(db, async (tx) => {
+      const t = await allocateTransactionId(tx, batch, event);
+      tx.set(doc(db, COL.orders, id), clean({ ...data, transactionId: t, ...stamp(by) }));
+      return t;
+    });
+    return { id, transactionId: tid };
+  },
   patch: (id: string, data: Partial<Order>, by: string) => patch(COL.orders, id, data, by),
   setStatus: async (o: Order, status: OrderStatus, by: string, extra: Partial<Order> = {}) => {
     const now = Date.now();
@@ -185,6 +219,52 @@ export const wrapupRepo = {
   setBundleSold: (eventId: string, bundleId: string, value: number, by: string) =>
     updateDoc(doc(db, COL.wrapups, eventId), new FieldPath('bundlesSold', bundleId), value, new FieldPath('updatedAt'), Date.now(), new FieldPath('updatedBy'), by),
   patch: (eventId: string, data: Partial<Wrapup>, by: string) => patch(COL.wrapups, eventId, data, by),
+};
+
+// ---- Media ----
+export const mediaRepo = {
+  create: async (data: Omit<Media, 'id' | 'createdAt' | 'createdBy'>, by: string): Promise<string> => {
+    const id = newId();
+    await setDoc(doc(db, COL.media, id), { ...data, createdAt: Date.now(), createdBy: by });
+    return id;
+  },
+  remove: (id: string) => deleteDoc(doc(db, COL.media, id)),
+};
+
+// ---- Forms ----
+export const formRepo = {
+  /** The form id is the batch id, which is what ties a form to exactly one batch. */
+  create: async (batchId: string, data: Omit<FormDoc, 'id' | keyof Meta>, by: string) => {
+    await setDoc(doc(db, COL.forms, batchId), clean({ ...data, ...stamp(by) }));
+    return batchId;
+  },
+  patch: (id: string, data: Partial<FormDoc>, by: string) => patch(COL.forms, id, data, by),
+  remove: async (id: string) => {
+    const b = writeBatch(db);
+    b.delete(doc(db, COL.forms, id));
+    b.delete(doc(db, COL.publicForms, id));
+    await b.commit();
+  },
+  /** Write the public snapshot and stamp the form as published. */
+  publish: async (formId: string, pf: Omit<PublicForm, 'id'>, hash: string, by: string) => {
+    const b = writeBatch(db);
+    b.set(doc(db, COL.publicForms, formId), clean(pf));
+    b.update(doc(db, COL.forms, formId), { publishedAt: pf.publishedAt, publishedHash: hash, enabled: pf.enabled, ...touch(by) });
+    await b.commit();
+  },
+  /** Flip accepting on the form and, when it has been published, on the public snapshot too. */
+  setEnabled: async (formId: string, enabled: boolean, published: boolean, by: string) => {
+    const b = writeBatch(db);
+    b.update(doc(db, COL.forms, formId), { enabled, ...touch(by) });
+    if (published) b.update(doc(db, COL.publicForms, formId), { enabled });
+    await b.commit();
+  },
+};
+
+// ---- Submissions (staff side) ----
+export const submissionRepo = {
+  patch: (id: string, data: Partial<Submission>) => updateDoc(doc(db, COL.submissions, id), clean(data)),
+  remove: (id: string) => deleteDoc(doc(db, COL.submissions, id)),
 };
 
 // ---- Settings ----

@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth';
 import { useToast } from '@/components/ui/Toast';
 import { eventRepo } from '@/lib/repo';
 import { formatDate } from '@/lib/format';
+import { eventCode } from '@/lib/forms';
 import Button from '@/components/ui/Button';
 import { Field, Input, Textarea } from '@/components/ui/Field';
 import { Empty, PageHeader, StatusPill, TableWrap } from '@/components/ui/Bits';
@@ -19,10 +20,10 @@ export default function EventsPage() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [d, setD] = useState({ name: '', startDate: '', endDate: '', venue: '', notes: '' });
+  const [d, setD] = useState({ name: '', code: '', startDate: '', endDate: '', venue: '', notes: '' });
 
   const openNewEvent = () => {
-    setD({ name: '', startDate: '', endDate: '', venue: '', notes: '' });
+    setD({ name: '', code: '', startDate: '', endDate: '', venue: '', notes: '' });
     setOpen(true);
   };
 
@@ -33,6 +34,7 @@ export default function EventsPage() {
     const ok = await run(async () => {
       newId = await eventRepo.create({
         name: d.name.trim(),
+        code: eventCode({ name: d.name.trim(), code: d.code }),
         startDate: d.startDate || '',
         endDate: d.endDate && d.startDate && d.endDate < d.startDate ? d.startDate : (d.endDate || d.startDate || ''),
         venue: d.venue?.trim() || '',
@@ -85,6 +87,7 @@ export default function EventsPage() {
       <Modal open={open} onClose={() => setOpen(false)} title="New event" footer={<><Button onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" onClick={create} busy={busy} disabled={!d.name.trim()}>Create</Button></>}>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Name" className="sm:col-span-2"><Input value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} placeholder="e.g. Comic Frontier 23 (CF23)" autoFocus /></Field>
+          <Field label="Code" hint="Used in order IDs, e.g. CF23_1_0002. Taken from the brackets in the name when blank."><Input value={d.code} onChange={(e) => setD({ ...d, code: e.target.value.toUpperCase() })} placeholder={d.name ? eventCode({ name: d.name }) : 'CF23'} /></Field>
           <Field label="First day" hint="Optional, leave blank if unconfirmed"><Input type="date" value={d.startDate} onChange={(e) => setD({ ...d, startDate: e.target.value })} /></Field>
           <Field label="Last day" hint="Optional"><Input type="date" value={d.endDate} onChange={(e) => setD({ ...d, endDate: e.target.value })} /></Field>
           <Field label="Venue and booth" hint="Optional" className="sm:col-span-2"><Input value={d.venue} onChange={(e) => setD({ ...d, venue: e.target.value })} placeholder="e.g. ICE BSD Hall 3 Booth A-12" /></Field>

@@ -18,7 +18,7 @@ interface LineDraft { key: string; qty: string }
 export default function ManualOrderModal({ open, onClose, event, batches }: { open: boolean; onClose: () => void; event: Event; batches: Batch[] }) {
   const { me } = useAuth();
   const { items, itemsById, settings } = useData();
-  const { run } = useToast();
+  const { run, toast } = useToast();
   const [batchId, setBatchId] = useState(batches.find((b) => b.status === 'open')?.id ?? batches.at(-1)?.id ?? '');
   const [fulfilment, setFulfilment] = useState<Fulfilment>('pickup');
   const [c, setC] = useState({ name: '', email: '', phone: '', address: '' });
@@ -45,12 +45,17 @@ export default function ManualOrderModal({ open, onClose, event, batches }: { op
     if (!valid || !batch) return;
     setBusy(true);
     const ful: Fulfilment = batch.mode === 'post' ? 'mail' : fulfilment;
-    const ok = await run(() => orderRepo.create({
-      eventId: event.id, batchId, source: 'manual', externalId: '', submittedAt: Date.now(),
-      customer: { name: c.name.trim(), email: c.email.trim(), phone: c.phone.trim(), address: c.address.trim() || undefined },
-      fulfilment: ful, status: ful === 'pickup' ? 'awaiting_pickup' : 'awaiting_shipment',
-      rawLines, lines: expandLines(rawLines, itemsById), total, notes: 'Entered manually',
-    }, me), 'Order added');
+    let tid = '';
+    const ok = await run(async () => {
+      const r = await orderRepo.createNumbered({
+        eventId: event.id, batchId, source: 'manual', externalId: '', submittedAt: Date.now(),
+        customer: { name: c.name.trim(), email: c.email.trim(), phone: c.phone.trim(), address: c.address.trim() || undefined },
+        fulfilment: ful, status: ful === 'pickup' ? 'awaiting_pickup' : 'awaiting_shipment',
+        rawLines, lines: expandLines(rawLines, itemsById), total, notes: 'Entered manually',
+      }, batch, event, me);
+      tid = r.transactionId;
+    });
+    if (ok) toast(`Order ${tid} added`);
     setBusy(false);
     if (ok) { onClose(); setC({ name: '', email: '', phone: '', address: '' }); setLines([{ key: '', qty: '1' }]); }
   };

@@ -1,33 +1,41 @@
 # Deployment guide
 
-Everything needed to take the project from a fresh clone to a working deployment, including the parts that must be done by hand in the Firebase console and in JotForm.
+Everything needed to take the project from a fresh clone to a working deployment, including the parts that must be done by hand in the Firebase console.
 
 The current Firebase project id is in `.firebaserc` (`tsuchinoco-318b2`). Replace it if you deploy to a different project.
+
+## Plan requirements
+
+The app is built so that everything needed to run the preorder form, orders, stock, planning, and wrap-up works on the **free Spark plan**: Firestore, Authentication, and Hosting. Nothing in the main app calls a Cloud Function.
+
+Two things need the **Blaze plan** and are deferred (see `docs/ROADMAP.md`):
+
+- Cloud Functions, used only by the legacy JotForm integration in `functions/`. Do not deploy it on Spark; the deploy fails.
+- Cloud Storage, for payment-proof uploads and larger images.
 
 ## Prerequisites
 
 - Node.js 20 or newer and npm.
 - Firebase CLI: `npm install -g firebase-tools`, then `firebase login`.
-- Java 11 or newer, only if you want to run the local emulators.
+- Java 11 or newer, only for the local emulators.
 - A Google account that will become the first staff member.
-- A JotForm account with API access (any plan, including free, can create API keys).
 
 ## 1. Firebase project
 
 In the [Firebase console](https://console.firebase.google.com/):
 
-1. Create a project, or open the existing one. Name does not matter.
-2. **Upgrade to the Blaze (pay as you go) plan.** Cloud Functions v2 require it. Usage for a tool this size stays inside the free quota, but the plan must be Blaze.
-3. Under **Project settings → General → Your apps**, add a **Web app**. Do not enable Firebase Hosting from this dialog, it is configured by `firebase.json`. Copy the `firebaseConfig` values; they go into `.env.local` (step 7) and into the hosting build.
+1. Create a project, or open the existing one. Stay on the Spark plan for now.
+2. Under **Project settings → General → Your apps**, add a **Web app**. Do not enable Firebase Hosting from this dialog, it is configured by `firebase.json`. Copy the `firebaseConfig` values; they go into `.env.local` (step 5) and into the hosting build.
 
 ## 2. Authentication
 
 **Build → Authentication → Get started.**
 
-1. **Sign-in method → Add new provider → Google.** Enable it. Set a support email. Save.
-2. **Settings → Authorized domains.** `localhost` and the `*.web.app` / `*.firebaseapp.com` domains are added automatically. Add any custom domain you attach later.
+1. **Sign-in method → Add new provider → Google.** Enable it. Set a support email. Save. This is the staff sign-in.
+2. **Sign-in method → Add new provider → Anonymous.** Enable it. The public preorder form signs customers in anonymously right before they submit, so that the security rules can require a signed-in user. No customer account is ever created.
+3. **Settings → Authorized domains.** `localhost` and the `*.web.app` / `*.firebaseapp.com` domains are added automatically. Add any custom domain you attach later.
 
-Nothing else. There are no roles; access is decided by the `staff` collection.
+There are no roles; staff access is decided by the `staff` collection.
 
 ## 3. Firestore
 
@@ -38,30 +46,7 @@ Nothing else. There are no roles; access is decided by the `staff` collection.
 
 Firestore offline persistence is enabled in the app, so no console setting is needed for that.
 
-## 4. Cloud Functions region
-
-The functions deploy to `asia-southeast1` by default. This is set in two places that must agree:
-
-- `functions/src/index.ts`: `const REGION = 'asia-southeast1'`
-- `.env.local` and the hosting build: `NEXT_PUBLIC_FIREBASE_FUNCTIONS_REGION=asia-southeast1`
-
-Change both if you want a different region.
-
-## 5. JotForm API key and secret
-
-1. In JotForm: **avatar → Settings → API → Create New Key.** Permission must be **Full Access** (the functions create forms and register webhooks). Copy the key.
-2. If the account is on JotForm EU, the API base is `https://eu-api.jotform.com`. Set it as a parameter at deploy time (the CLI prompts for `JOTFORM_API_BASE`) or accept the default `https://api.jotform.com`.
-3. Store the key as a Cloud Functions secret:
-
-```bash
-firebase functions:secrets:set JOTFORM_API_KEY
-```
-
-Paste the key when prompted. To rotate it later, run the same command and redeploy the functions.
-
-The key is never stored in Firestore or in the web bundle. Settings → JotForm connection → **Test connection** calls a function that uses the secret and reports the connected username.
-
-## 6. First staff member (manual, once)
+## 4. First staff member (manual, once)
 
 The security rules only admit emails that exist in the `staff` collection, so the very first document has to be created by hand.
 
@@ -82,31 +67,26 @@ The security rules only admit emails that exist in the `staff` collection, so th
 
 After this one document, everyone else is added from **Settings → Staff** inside the app.
 
-## 7. Environment file
+## 5. Environment file
 
 ```bash
 cp env.template .env.local
 ```
 
-Fill in the six `NEXT_PUBLIC_FIREBASE_*` values from step 1 and keep `NEXT_PUBLIC_FIREBASE_FUNCTIONS_REGION` in sync with step 4. `.env.local` is git-ignored. For CI builds, provide the same variables as environment variables.
+Fill in the six `NEXT_PUBLIC_FIREBASE_*` values from step 1. `.env.local` is git-ignored. For CI builds, provide the same variables as environment variables. `NEXT_PUBLIC_FIREBASE_FUNCTIONS_REGION` only matters for the legacy JotForm functions.
 
-## 8. Deploy
+## 6. Deploy (Spark)
 
 From the repo root:
 
 ```bash
 npm install
-npm --prefix functions install
 ```
 
-Deploy the rules first, then functions, then hosting. The first functions deploy takes several minutes while Google enables Cloud Build, Artifact Registry, and Eventarc.
+Deploy the rules first, then hosting.
 
 ```bash
 firebase deploy --only firestore
-```
-
-```bash
-firebase deploy --only functions
 ```
 
 ```bash
@@ -117,49 +97,40 @@ npm run build
 firebase deploy --only hosting
 ```
 
-Or everything at once:
+Do **not** run a bare `firebase deploy` on the Spark plan: it tries to deploy `functions/` and fails.
 
-```bash
-npm run build && firebase deploy
-```
-
-The site is served at `https://<project-id>.web.app`.
+The site is served at `https://<project-id>.web.app`. The public preorder form of a batch is `https://<project-id>.web.app/f/?id=<batchId>`; the staff app shows and copies this link.
 
 ### What each deploy target does
 
 | Target | Source | Notes |
 | --- | --- | --- |
-| `firestore` | `firestore.rules`, `firestore.indexes.json` | The rules file is the whole access model. No composite indexes are required today. |
-| `functions` | `functions/` | Builds TypeScript via the `predeploy` hook. Needs the `JOTFORM_API_KEY` secret to exist. |
-| `hosting` | `out/` | Produced by `npm run build`. `trailingSlash` is on, so every page is a folder with an `index.html`. |
+| `firestore` | `firestore.rules`, `firestore.indexes.json` | The rules file is the whole access model, including the two public exceptions for the form. |
+| `hosting` | `out/` | Produced by `npm run build`. `trailingSlash` is on, so every page is a folder with an `index.html`. The customer page `/f/` is part of the same build. |
+| `functions` | `functions/` | Legacy JotForm integration. Blaze only. |
 
-## 9. Verify
+## 7. Verify
 
-1. Open the site and sign in with the Google account from step 6. You should land on the dashboard with the "Getting started" checklist.
-2. Settings → JotForm connection → **Test connection** should show your JotForm username. If it fails with a permission error, the secret is missing or the key lacks Full Access.
-3. Add a test item, create an event, add batch 1, pick the item, **Generate form**. The batch card shows the form URL.
-4. In JotForm, confirm the form exists and that **Settings → Integrations → Webhooks** lists the function URL `https://asia-southeast1-<project-id>.cloudfunctions.net/jotformWebhook`.
-5. Submit the form once. Within a few seconds the order appears on the event's Orders tab. If it does not, open the function logs:
+1. Open the site and sign in with the Google account from step 4. You land on **Orders**.
+2. Catalogue: add a test item and give it a thumbnail.
+3. Events: create an event with a code (for example `TEST`), add batch 1, pick the item in the offering, **Create form**, then **Publish**. Open the form link in a private window.
+4. Submit the form once. Back in the staff app, Orders shows the submission being imported and then the order with an ID like `TEST_1_0001`.
+5. Delete the test item and event afterwards, or keep the event and cancel the test order.
 
-```bash
-firebase functions:log --only jotformWebhook
-```
-
-6. Delete the test item and event afterwards, or keep the event and cancel the test order.
-
-## 10. Day-to-day operations
+## 8. Day-to-day operations
 
 - **Adding staff:** Settings → Staff → Add. Deactivate instead of deleting so names stay on history.
-- **Rotating the JotForm key:** step 5, then `firebase deploy --only functions`.
-- **Backups:** Firestore has no automatic backups on the free tier. Schedule exports with `gcloud firestore export gs://<bucket>` from Cloud Scheduler, or at least export CSVs from the app before and after each event.
-- **Missed webhooks:** on the batch card, **Re-import** pulls every submission for the form through the same import path. It is safe to run repeatedly; submissions are matched by their JotForm id.
-- **Changing the offering after the form exists:** edit the offering, then **Re-sync fields**. New variants are added as fields, removed ones are deleted from the form. Customer fields are never touched.
+- **Changing the offering or layout after publishing:** edit, then **Publish** again on the batch card or Forms page. Customers see the new version on their next load.
+- **Stopping submissions:** close the batch, or flip **Accepting** on the Forms page.
+- **Submissions that did not become orders:** Orders shows them under "New submissions" with the reason. Import runs automatically while the app is open; use **Import now** after fixing the cause.
+- **Backups:** Firestore has no automatic backups on the free tier. Export CSVs from the app before and after each event. Scheduled exports need Blaze.
 
-## Local emulators (optional)
+## Local emulators
+
+Needs Java and `firebase-tools` installed.
 
 ```bash
-npm --prefix functions run build
-firebase emulators:start
+firebase emulators:start --only auth,firestore,hosting
 ```
 
 To point the web app at the emulators, add to `.env.local`:
@@ -168,16 +139,34 @@ To point the web app at the emulators, add to `.env.local`:
 NEXT_PUBLIC_USE_EMULATORS=1
 ```
 
-`src/lib/firebase.ts` then connects Firestore, Auth, and Functions to the emulator ports in `firebase.json`. The emulated Firestore starts empty, so create the first `staff` document in the emulator UI (http://localhost:4000) just as in step 6. For the functions emulator to reach JotForm, create `functions/.secret.local` containing `JOTFORM_API_KEY=<key>`.
+`src/lib/firebase.ts` then connects Firestore and Auth to the emulator ports in `firebase.json`. The emulated Firestore starts empty, so create the first `staff` document in the emulator UI (http://localhost:4000) just as in step 4. The Auth emulator accepts anonymous sign-in without any setup.
+
+Run the Next.js dev server separately with `npm run dev`; the customer page is then `http://localhost:3000/f/?id=<batchId>`.
+
+## Moving to Blaze later
+
+1. Upgrade the project in the console (Billing → Modify plan). Set a budget alert.
+2. Storage: **Build → Storage → Get started**, then follow the phase 4 notes in `docs/ROADMAP.md`.
+3. Functions: `npm --prefix functions install`, then `firebase deploy --only functions`. The first deploy takes several minutes while Google enables Cloud Build, Artifact Registry, and Eventarc. Only needed if the legacy JotForm path or the planned server-side features are wanted.
+
+## Legacy: JotForm functions
+
+Kept for reference until the JotForm path is removed. Requires Blaze.
+
+1. JotForm: **avatar → Settings → API → Create New Key** with **Full Access**.
+2. Store it as a secret: `firebase functions:secrets:set JOTFORM_API_KEY`. EU accounts set `JOTFORM_API_BASE=https://eu-api.jotform.com` at deploy time.
+3. `firebase deploy --only functions`. The webhook URL is `https://asia-southeast1-<project-id>.cloudfunctions.net/jotformWebhook`.
+4. Settings → JotForm connection → **Test connection** reports the connected username.
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| "Firebase is not configured" screen | `.env.local` missing or values blank | Step 7, then restart `npm run dev` |
-| "Not on the staff list" after sign-in | No active `staff/<email>` document, or email case mismatch | Step 6; the document id must be lower-case |
+| "Firebase is not configured" screen | `.env.local` missing or values blank | Step 5, then restart `npm run dev` |
+| "Not on the staff list" after sign-in | No active `staff/<email>` document, or email case mismatch | Step 4; the document id must be lower-case |
 | Sign-in popup blocked or `auth/unauthorized-domain` | Domain not in Authorized domains | Step 2 |
-| Generate form fails with `permission-denied` | Signed-in user is not active staff, or the callable region differs from the app's | Check `staff` doc; check step 4 |
-| Generate form fails with `JotForm POST /form` | Wrong key, key without Full Access, or EU account on the US base URL | Step 5 |
-| Orders do not arrive | Webhook not registered, or the function errored | Step 9.4 and the logs; use Re-import meanwhile |
-| Functions deploy fails on first run | Blaze plan not enabled, or APIs still enabling | Step 1.2; wait a minute and retry |
+| Customer form says "could not submit" with `permission-denied` | Anonymous provider not enabled, rules not deployed, or the public form is disabled | Step 2.2, `firebase deploy --only firestore`, check Accepting on the Forms page |
+| Customer form shows "Form not found" | Not published yet, or wrong id in the link | Publish from the batch card or Forms page |
+| Publish fails with "too large" | Too many or too big images for one Firestore document | Replace big thumbnails; the message names the heaviest ones |
+| Orders do not appear after a customer submits | No staff member has the app open; import runs in the browser | Open Orders; use Import now |
+| `firebase deploy` fails mentioning functions or Blaze | Bare deploy on the Spark plan | Use `--only firestore` and `--only hosting` |

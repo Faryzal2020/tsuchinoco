@@ -17,6 +17,7 @@ import { Kv, PageHeader, Panel, Pill, StatusPill, TableWrap } from '@/components
 import { Confirm } from '@/components/ui/Dialog';
 import { VariantSelect, useVariantLabel } from '@/components/VariantSelect';
 import { QueryPage, useQuery } from '@/lib/useQuery';
+import ThumbnailInput from '@/components/form/ThumbnailInput';
 
 type Draft = Omit<Item, 'id' | 'createdAt' | 'updatedAt' | 'updatedBy'>;
 
@@ -197,6 +198,11 @@ function ItemEditor() {
               </Field>
               {!isBundle && <Field label="Produced at" hint="Where this is made. Free text." className="sm:col-span-2"><Input value={draft.producedAt} onChange={(e) => up({ producedAt: e.target.value })} /></Field>}
               <Field label="Notes" className="sm:col-span-2"><Textarea value={draft.notes} onChange={(e) => up({ notes: e.target.value })} /></Field>
+              <div className="sm:col-span-2">
+                <span className="label">Thumbnail</span>
+                <ThumbnailInput value={draft.thumbnailId} onChange={(thumbnailId) => up({ thumbnailId })} />
+                <span className="hint mt-1 block">Shown next to this item on the preorder form. Uploads are saved immediately; press Save to attach it to the item.</span>
+              </div>
               <Checkbox label="Active (offered in new batches)" checked={draft.active} onChange={(e) => up({ active: e.target.checked })} />
             </div>
           </Panel>
@@ -312,11 +318,17 @@ function VariantsEditor({
     <Panel>
       <div className="mb-1 flex items-baseline justify-between">
         <h2 className="font-bold">Variants</h2>
-        <span className="hint">Leave empty for an item with no variants.</span>
+        <span className="hint">Leave empty for an item with no variants. The small square is an optional per-variant thumbnail.</span>
       </div>
       <div className="grid gap-2.5 mt-3">
         {variants.map((v, idx) => (
-          <div key={v.id} className="grid grid-cols-[minmax(0,1.2fr)_110px_95px_95px_auto_auto] items-center gap-2 p-2 border border-line rounded-md bg-surface-2/40">
+          <div key={v.id} className="grid grid-cols-[auto_minmax(0,1.2fr)_110px_95px_95px_auto_auto] items-center gap-2 p-2 border border-line rounded-md bg-surface-2/40">
+            <ThumbnailInput size="sm" value={v.thumbnailId} title="Variant thumbnail (optional, overrides the item thumbnail on the form)" onChange={(thumbnailId) => {
+              const next = [...variants];
+              next[idx] = { ...v, thumbnailId };
+              if (!thumbnailId) delete next[idx].thumbnailId;
+              onChange(next);
+            }} />
             <Input
               small
               value={v.name}

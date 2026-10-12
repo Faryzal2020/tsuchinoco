@@ -29,7 +29,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!isFirebaseConfigured) { setUser(null); return; }
-    return onAuthStateChanged(auth, (u) => { setUser(u); if (!u) setStaff(undefined); });
+    // Customers on the public form sign in anonymously (no email). In the staff app that
+    // counts as signed out; the Google popup replaces the anonymous user.
+    return onAuthStateChanged(auth, (u) => { const staffUser = u && u.email ? u : null; setUser(staffUser); if (!staffUser) setStaff(undefined); });
   }, []);
 
   useEffect(() => {

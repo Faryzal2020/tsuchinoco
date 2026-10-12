@@ -4,8 +4,10 @@ import React, { useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { useData } from '@/lib/data';
 import { useToast } from '@/components/ui/Toast';
-import { batchRepo } from '@/lib/repo';
+import { batchRepo, formRepo } from '@/lib/repo';
 import { fx } from '@/lib/functions';
+import { createFormForBatch, formChangedSincePublish, publishForm } from '@/lib/formActions';
+import { formUrl } from '@/lib/forms';
 import { formatDate, formatDateTime } from '@/lib/format';
 import type { Batch, BatchStatus, OfferingEntry } from '@/types';
 import Button from '@/components/ui/Button';
@@ -35,9 +37,9 @@ export default function BatchesTab({ event, batches, orders }: TabProps) {
     <div className="grid gap-5">
       {batches.length === 0 ? (
         <Empty title="No batches yet" action={<Button variant="primary" onClick={addBatch} busy={busy}>Add batch 1</Button>}>
-          A batch is one preorder window with its own form. Pick what is on offer, generate the form, then open it.
+          A batch is one preorder window with its own form. Pick what is on offer, create the form, then open the batch.
         </Empty>
-      ) : batches.map((b) => <BatchCard key={b.id} batch={b} batches={batches} orderCount={orders.filter((o) => o.batchId === b.id).length} />)}
+      ) : batches.map((b) => <BatchCard key={b.id} event={event} batch={b} batches={batches} orderCount={orders.filter((o) => o.batchId === b.id).length} />)}
       {batches.length > 0 && (
         <div><Button onClick={addBatch} busy={busy}>Add batch {(batches.at(-1)?.number ?? 0) + 1}</Button> <span className="hint ml-2">The offering is copied from the previous batch.</span></div>
       )}
@@ -45,9 +47,9 @@ export default function BatchesTab({ event, batches, orders }: TabProps) {
   );
 }
 
-function BatchCard({ batch: b, batches, orderCount }: { batch: Batch; batches: Batch[]; orderCount: number }) {
+function BatchCard({ event, batch: b, batches, orderCount }: { event: TabProps['event']; batch: Batch; batches: Batch[]; orderCount: number }) {
   const { me } = useAuth();
-  const { items } = useData();
+  const { items, itemsById, settings, formsById, publicFormsById } = useData();
   const { run, toast } = useToast();
   const [editOffering, setEditOffering] = useState(false);
   const [offering, setOffering] = useState<OfferingEntry[]>(b.offering);
@@ -55,10 +57,19 @@ function BatchCard({ batch: b, batches, orderCount }: { batch: Batch; batches: B
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
 
+  const form = formsById.get(b.id);
+  const pub = publicFormsById.get(b.id);
+  const legacy = b.form?.provider === 'jotform';
+  const changed = form ? formChangedSincePublish(form, b, itemsById) : false;
+
   const act = async (key: string, fn: () => Promise<unknown>, ok?: string) => { setBusy(key); await run(fn, ok); setBusy(''); };
 
   const setStatus = (status: BatchStatus) => act(status, async () => {
-    if (b.form) {
+    if (form) {
+      // Opening publishes the form if it never was, and turns accepting on. Closing turns it off.
+      if (status === 'open') { if (!pub || changed) await publishForm(form, b, event, itemsById, settings, pub, me, true); else await formRepo.setEnabled(form.id, true, true, me); }
+      if (status === 'closed' || status === 'fulfilled') await formRepo.setEnabled(form.id, false, !!pub, me);
+    } else if (legacy && b.form) {
       if (status === 'open') await fx.setFormStatus({ batchId: b.id, enabled: true });
       if (status === 'closed') await fx.setFormStatus({ batchId: b.id, enabled: false });
     }
@@ -73,6 +84,13 @@ function BatchCard({ batch: b, batches, orderCount }: { batch: Batch; batches: B
     await batchRepo.patch(b.id, { offering }, me);
     setEditOffering(false);
   }, 'Offering saved');
+
+  const removeBatch = () => act('delete', async () => {
+    if (form) await formRepo.remove(form.id);
+    await batchRepo.remove(b.id);
+  }, 'Batch deleted');
+
+  const url = form ? formUrl(form.id) : legacy ? b.form!.url : '';
 
   return (
     <Panel>
@@ -90,7 +108,7 @@ function BatchCard({ batch: b, batches, orderCount }: { batch: Batch; batches: B
           {b.status === 'open' && <Button variant="accent" size="sm" onClick={() => setConfirmClose(true)} busy={busy === 'closed'}>Close batch</Button>}
           {b.status === 'closed' && <Button size="sm" onClick={() => setStatus('fulfilled')} busy={busy === 'fulfilled'}>Mark fulfilled</Button>}
           {b.status === 'closed' && <Button size="sm" variant="quiet" onClick={() => setStatus('open')} busy={busy === 'open'} disabled={otherOpen}>Reopen</Button>}
-          {orderCount === 0 && !b.form && <Button size="sm" variant="danger" onClick={() => setConfirmDelete(true)}>Delete</Button>}
+          {orderCount === 0 && !legacy && <Button size="sm" variant="danger" onClick={() => setConfirmDelete(true)}>Delete</Button>}
         </div>
       </div>
 
@@ -111,42 +129,60 @@ function BatchCard({ batch: b, batches, orderCount }: { batch: Batch; batches: B
             <h3 className="font-bold">Offering</h3>
             <Button size="sm" onClick={() => { setOffering(b.offering); setEditOffering(true); }}>Edit offering</Button>
           </div>
-          <p className="hint mt-1">{offeringCount === 0 ? 'Nothing selected yet.' : `${offeringCount} variants and bundles. Each becomes one quantity field on the form.`}</p>
+          <p className="hint mt-1">{offeringCount === 0 ? 'Nothing selected yet.' : `${offeringCount} variants and bundles. Each becomes one row on the form, grouped by type.`}</p>
         </div>
 
         <div className="rounded-lg border border-line bg-cream p-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <h3 className="font-bold">Form</h3>
-            {!b.form ? (
-              <Button size="sm" variant="primary" disabled={offeringCount === 0} busy={busy === 'gen'} onClick={() => act('gen', () => fx.generateForm({ batchId: b.id }), 'Form generated')}>Generate form</Button>
-            ) : (
+            {!form && !legacy && (
+              <Button size="sm" variant="primary" disabled={offeringCount === 0} busy={busy === 'create'} title={offeringCount === 0 ? 'Pick the offering first' : undefined} onClick={() => act('create', () => createFormForBatch(b, event, itemsById, me), 'Form created. Publish it when the offering is final.')}>Create form</Button>
+            )}
+            {form && (
+              <div className="flex gap-2">
+                <Button size="sm" href={`/forms/preview/?id=${form.id}`}>Preview</Button>
+                <Button size="sm" variant={pub && !changed ? 'neutral' : 'primary'} busy={busy === 'publish'} onClick={() => act('publish', () => publishForm(form, b, event, itemsById, settings, pub, me), pub ? 'Republished' : 'Published')}>{pub ? 'Republish' : 'Publish'}</Button>
+              </div>
+            )}
+            {legacy && (
               <div className="flex gap-2">
                 <Button size="sm" busy={busy === 'sync'} onClick={() => act('sync', () => fx.syncForm({ batchId: b.id }), 'Form fields updated')}>Re-sync fields</Button>
                 <Button size="sm" busy={busy === 'reimport'} onClick={() => act('reimport', async () => { const r = await fx.reimportBatch({ batchId: b.id }); toast(`Imported ${r.imported} new, updated ${r.updated}, skipped ${r.skipped}`); })}>Re-import</Button>
               </div>
             )}
           </div>
-          {b.form ? (
+          {form ? (
             <div className="mt-2 text-sm">
-              <a className="text-blue-ink break-all" href={b.form.url} target="_blank" rel="noreferrer">{b.form.url}</a>
-              <div className="hint mt-1">Generated {formatDateTime(b.form.generatedAt)} · {Object.keys(b.form.fieldMap).length} item fields. Submissions arrive automatically.</div>
-              <Button size="sm" variant="quiet" className="mt-1" onClick={() => { navigator.clipboard?.writeText(b.form!.url); toast('Link copied'); }}>Copy link</Button>
+              <div className="flex flex-wrap items-center gap-2">
+                {pub ? <Pill tone={pub.enabled ? 'green' : 'yellow'}>{pub.enabled ? 'Published · accepting' : 'Published · paused'}</Pill> : <Pill>Draft, not published</Pill>}
+                {pub && changed && <Pill tone="yellow">Changed since publish</Pill>}
+              </div>
+              <a className="text-blue-ink break-all block mt-2" href={url} target="_blank" rel="noreferrer">{url}</a>
+              <div className="hint mt-1">{pub ? `Published ${formatDateTime(pub.publishedAt)} · v${pub.version} · ${Object.keys(pub.items).length} rows.` : 'Customers see nothing until the first publish. Opening the batch publishes it.'} Submissions become orders while the app is open.</div>
+              <Button size="sm" variant="quiet" className="mt-1" onClick={() => { navigator.clipboard?.writeText(url); toast('Link copied'); }}>Copy link</Button>
             </div>
-          ) : <p className="hint mt-1">Generates a JotForm from the offering and connects it. Edit the offering first.</p>}
+          ) : legacy ? (
+            <div className="mt-2 text-sm">
+              <Pill>JotForm (legacy)</Pill>
+              <a className="text-blue-ink break-all block mt-2" href={url} target="_blank" rel="noreferrer">{url}</a>
+              <div className="hint mt-1">Generated {formatDateTime(b.form!.generatedAt)}. Re-sync and re-import need the Cloud Functions, which need the Blaze plan.</div>
+            </div>
+          ) : <p className="hint mt-1">Builds the in-house preorder form from the offering. Edit the offering first.</p>}
         </div>
       </div>
 
       <Modal open={editOffering} onClose={() => setEditOffering(false)} title={`Batch ${b.number} offering`} wide
         footer={<><Button onClick={() => setEditOffering(false)}>Cancel</Button><Button variant="primary" onClick={saveOffering} busy={busy === 'offering'}>Save offering</Button></>}>
-        {b.form && <p className="mb-3 text-sm rounded-md bg-yellow-soft px-3 py-2 text-yellow-ink">This batch already has a form. After saving, use Re-sync fields to push the change to JotForm.</p>}
+        {pub && <p className="mb-3 text-sm rounded-md bg-yellow-soft px-3 py-2 text-yellow-ink">This batch&apos;s form is published. After saving, publish again so customers see the new offering.</p>}
+        {legacy && <p className="mb-3 text-sm rounded-md bg-yellow-soft px-3 py-2 text-yellow-ink">This batch uses a legacy JotForm. After saving, use Re-sync fields to push the change to JotForm.</p>}
         <OfferingPicker value={offering} onChange={setOffering} />
       </Modal>
 
       <Confirm open={confirmClose} onClose={() => setConfirmClose(false)} onConfirm={async () => { setConfirmClose(false); await setStatus('closed'); }} title={`Close batch ${b.number}?`} confirmLabel="Close batch">
         The form stops accepting submissions. You can reopen it later.{b.closesAt && ` Planned close date was ${formatDate(b.closesAt)}.`}
       </Confirm>
-      <Confirm open={confirmDelete} onClose={() => setConfirmDelete(false)} onConfirm={() => act('delete', () => batchRepo.remove(b.id), 'Batch deleted')} title={`Delete batch ${b.number}?`} confirmLabel="Delete" danger>
-        It has no orders and no form.
+      <Confirm open={confirmDelete} onClose={() => setConfirmDelete(false)} onConfirm={removeBatch} title={`Delete batch ${b.number}?`} confirmLabel="Delete" danger>
+        It has no orders.{form && ' Its form and public page are deleted too.'}
       </Confirm>
     </Panel>
   );

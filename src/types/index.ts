@@ -12,6 +12,8 @@ export interface Variant {
   price?: number;     // specific variant PO price (falls back to item.price)
   otsPrice?: number;  // specific variant OTS price (falls back to item.otsPrice)
   priceJpy?: number;  // optional C107 / JPY price (falls back to item.priceJpy)
+  /** media id; overrides the item thumbnail on forms */
+  thumbnailId?: string;
 }
 
 export interface BundleComponent {
@@ -38,6 +40,8 @@ export interface Item {
   cost?: number;
   producedAt: string;
   active: boolean;
+  /** media id shown on forms */
+  thumbnailId?: string;
   variants: Variant[];
   components: BundleComponent[];
   notes: string;
@@ -61,6 +65,8 @@ export type EventStatus = 'upcoming' | 'wrapped';
 export interface Event {
   id: string;
   name: string;
+  /** Short upper-case code used in order IDs, e.g. CF23. Derived from the name when blank. */
+  code?: string;
   startDate: string; // ISO date, YYYY-MM-DD
   endDate: string;
   venue: string;
@@ -85,7 +91,16 @@ export interface OfferingEntry {
   overrideOtsPrice?: number;
 }
 
-export interface BatchForm {
+/** In-house form. formId equals the batch id and points at forms/{formId}. */
+export interface InhouseBatchForm {
+  provider: 'inhouse';
+  formId: string;
+  url: string;
+  generatedAt: number;
+}
+
+/** Legacy JotForm link. Needs the Cloud Functions, which need the Blaze plan. */
+export interface JotformBatchForm {
   provider: 'jotform';
   formId: string;
   url: string;
@@ -100,6 +115,8 @@ export interface BatchForm {
   };
   generatedAt: number;
 }
+
+export type BatchForm = InhouseBatchForm | JotformBatchForm;
 
 export interface PlanningInputs {
   onsiteExtra: number;
@@ -211,6 +228,165 @@ export interface Wrapup {
   createdAt: number;
   updatedAt: number;
   updatedBy: string;
+}
+
+// ---- Media (images stored inline until Cloud Storage is available) ----
+
+export interface Media {
+  id: string;
+  kind: 'thumbnail' | 'image';
+  mime: string;
+  dataUrl: string;
+  width: number;
+  height: number;
+  bytes: number;
+  name: string;
+  createdAt: number;
+  createdBy: string;
+}
+
+// ---- In-house forms ----
+
+export interface FormTheme {
+  background: string;
+  surface: string;
+  accent: string;
+  text: string;
+  font: 'sans' | 'serif' | 'rounded';
+  width: 'narrow' | 'normal' | 'wide';
+  radius: 'sharp' | 'soft' | 'round';
+}
+
+export type ProductsSource =
+  | { kind: 'type'; type: string }
+  | { kind: 'bundles' }
+  | { kind: 'all' }
+  | { kind: 'entries'; keys: string[] };
+
+export type FormBlock =
+  | { id: string; type: 'header'; title: string; subtitle?: string; imageId?: string }
+  | { id: string; type: 'text'; text: string }
+  | { id: string; type: 'image'; imageId: string; caption?: string; size: 'full' | 'half' }
+  | { id: string; type: 'divider' }
+  | { id: string; type: 'section'; title: string; description?: string }
+  | { id: string; type: 'products'; title?: string; source: ProductsSource; layout: 'list' | 'grid'; showThumbnails: boolean; showPrices: boolean }
+  | { id: string; type: 'customer' }
+  | { id: string; type: 'fulfilment' }
+  | { id: string; type: 'notes' }
+  | { id: string; type: 'submit' };
+
+export type FormBlockType = FormBlock['type'];
+
+export interface FormSettings {
+  /** Labels offered for pickup, e.g. "Day 1 (31 October 2026)". */
+  pickupDays: string[];
+  maxQtyPerLine: number;
+  requirePhone: boolean;
+  requireEmail: boolean;
+  thankYouMessage: string;
+  closedMessage: string;
+}
+
+/** Editable form definition. One per batch; the id is the batch id. */
+export interface FormDoc {
+  id: string;
+  eventId: string;
+  batchId: string;
+  title: string;
+  theme: FormTheme;
+  blocks: FormBlock[];
+  labels: Record<string, string>;
+  settings: FormSettings;
+  /** Desired accepting state; mirrored to the public snapshot. */
+  enabled: boolean;
+  publishedAt?: number;
+  publishedHash?: string;
+  createdAt: number;
+  updatedAt: number;
+  updatedBy: string;
+}
+
+export interface FormTemplate {
+  id: string;
+  name: string;
+  theme: FormTheme;
+  blocks: FormBlock[];
+  labels: Record<string, string>;
+  settings: FormSettings;
+  isDefault: boolean;
+  createdAt: number;
+  updatedAt: number;
+  updatedBy: string;
+}
+
+/** One sellable row on the public form. key is the variant key or the bundle item id. */
+export interface PublicProduct {
+  key: string;
+  itemId: string;
+  variantId?: string;
+  name: string;
+  variantName: string;
+  price: number;
+  thumb?: string;
+}
+
+/** One card on the public form: an item with its offered variants (or a bundle). */
+export interface PublicProductGroup {
+  itemId: string;
+  name: string;
+  kind: ItemKind;
+  thumb?: string;
+  products: PublicProduct[];
+}
+
+/** Public blocks are form blocks with media and products resolved. */
+export type PublicBlock = FormBlock & { src?: string; groups?: PublicProductGroup[] };
+
+/** The published snapshot customers read. Must stay under 1 MiB. */
+export interface PublicForm {
+  id: string;
+  formId: string;
+  eventId: string;
+  batchId: string;
+  enabled: boolean;
+  mode: BatchMode;
+  title: string;
+  theme: FormTheme;
+  labels: Record<string, string>;
+  settings: FormSettings;
+  currency: string;
+  blocks: PublicBlock[];
+  /** Every orderable key with the data the import and the rules need. */
+  items: Record<string, { name: string; variantName: string; price: number; kind: ItemKind }>;
+  maxQtyPerLine: number;
+  publishedAt: number;
+  version: number;
+}
+
+export type SubmissionStatus = 'new' | 'imported' | 'rejected';
+
+/** Written by the customer. Lines are a map key -> qty so the rules can check the keys. */
+export interface Submission {
+  id: string;
+  formId: string;
+  eventId: string;
+  batchId: string;
+  version: number;
+  code: string;
+  customer: { name: string; email: string; phone: string; address?: string };
+  fulfilment: Fulfilment;
+  pickupDay?: string;
+  notes: string;
+  lines: Record<string, number>;
+  submittedAt: number;
+  status: SubmissionStatus;
+  orderId?: string;
+  rejectReason?: string;
+}
+
+export interface Counter {
+  id: string; // = batchId
+  next: number;
 }
 
 export interface Settings {

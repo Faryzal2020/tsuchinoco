@@ -13,6 +13,50 @@ service cloud.firestore {
         && staffDoc().data.active == true;
     }
 
+    // ---- Public exception 1: the published form snapshot is readable by anyone. ----
+    match /publicForms/{formId} {
+      allow read: if true;
+      allow write: if isStaff();
+    }
+
+    // ---- Public exception 2: customers create one validated submission. ----
+    // Any signed-in user may create (the public page signs in anonymously first).
+    // Quantities are re-validated and clamped by the staff import; the rules bound the shape.
+    function pub() {
+      return get(/databases/$(database)/documents/publicForms/$(request.resource.data.formId));
+    }
+    function str(v, max) { return v is string && v.size() <= max; }
+    function validCustomer(c) {
+      return c is map
+        && c.keys().hasOnly(['name', 'email', 'phone', 'address'])
+        && c.keys().hasAll(['name', 'email', 'phone'])
+        && str(c.name, 120) && c.name.size() > 0
+        && str(c.email, 160) && str(c.phone, 60)
+        && (!('address' in c) || str(c.address, 600));
+    }
+    function validSubmission() {
+      let d = request.resource.data;
+      let p = pub();
+      return d.keys().hasOnly(['formId', 'eventId', 'batchId', 'version', 'code', 'customer', 'fulfilment', 'pickupDay', 'notes', 'lines', 'submittedAt', 'status'])
+        && d.keys().hasAll(['formId', 'eventId', 'batchId', 'version', 'code', 'customer', 'fulfilment', 'notes', 'lines', 'submittedAt', 'status'])
+        && str(d.formId, 40) && p.data.enabled == true
+        && d.eventId == p.data.eventId && d.batchId == p.data.batchId
+        && d.version is int
+        && str(d.code, 16)
+        && validCustomer(d.customer)
+        && d.fulfilment in ['pickup', 'mail']
+        && (!('pickupDay' in d) || str(d.pickupDay, 80))
+        && str(d.notes, 1000)
+        && d.lines is map && d.lines.size() >= 1 && d.lines.size() <= 60
+        && d.lines.keys().hasOnly(p.data.items.keys())
+        && d.submittedAt is number
+        && d.status == 'new';
+    }
+    match /submissions/{id} {
+      allow create: if request.auth != null && validSubmission();
+      allow read, update, delete: if isStaff();
+    }
+
     match /{document=**} {
       allow read, write: if isStaff();
     }

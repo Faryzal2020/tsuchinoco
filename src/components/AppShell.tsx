@@ -12,8 +12,9 @@ import { Checkbox, Select } from '@/components/ui/Field';
 import { Loading } from '@/components/ui/Bits';
 
 const NAV = [
-  { href: '/', label: 'Dashboard' },
+  { href: '/', label: 'Orders' },
   { href: '/events/', label: 'Events' },
+  { href: '/forms/', label: 'Forms' },
   { href: '/catalog/', label: 'Catalogue' },
   { href: '/stock/', label: 'Stock' },
   { href: '/settings/', label: 'Settings' },

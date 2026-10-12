@@ -10,8 +10,12 @@ Condensed from the design spec. This is the reference for what each Firestore co
 | Variant | A sellable version of an item. Every item has at least one; items without real variants use the hidden variant id `default`. Stock, orders, planning, and counts always refer to a variant. |
 | Bundle | An item of kind `bundle` with its own price and component variants. Ordered as one line, expanded to components for stock, price allocated across components. |
 | Event | A real-world sales event. Two never run at once, but preorder windows may overlap. |
-| Batch | A numbered preorder window inside an event with an offering and one JotForm. Batch 3 is usually the post-event, mail-only batch. |
-| Order | One form submission (or a manual entry). Pickup or mail. Raw lines as the customer saw them plus expanded lines per variant. |
+| Batch | A numbered preorder window inside an event with an offering and one form. Batch 3 is usually the post-event, mail-only batch. |
+| Form | The in-house preorder form of a batch: layout blocks, theme, labels. One per batch, so one per event window; it can never move to another event. |
+| Public form | The published, self-contained snapshot of a form that customers read. |
+| Submission | What a customer wrote on the public form, before staff import turns it into an order. |
+| Media | A small image (item thumbnail, header picture) stored inline in Firestore until Cloud Storage is available. |
+| Order | One imported submission (or a manual entry). Pickup or mail. Raw lines as the customer saw them plus expanded lines per variant. Carries the sequential order ID `<eventcode>_<batch>_<seq>`. |
 | Stock movement | One signed quantity change for one variant with a reason. On hand is the running sum. |
 | Committed | Units promised to orders that are not yet collected, shipped, or cancelled, across all events. |
 | Available | On hand minus committed. The number planning uses. |
@@ -45,7 +49,8 @@ Document id is the lower-cased Google email. An active document is the entire ac
 | `cost` | number? | Optional unit cost for margin |
 | `producedAt` | string | Free-text note, replaces the vendor sheet |
 | `active` | boolean | Inactive items are hidden from new offerings |
-| `variants` | `{ id, name, active }[]` | Products only. Empty means one implicit `default` variant. Ids never change. |
+| `thumbnailId` | string? | `media` document shown on forms |
+| `variants` | `{ id, name, active, sku?, price?, otsPrice?, priceJpy?, thumbnailId? }[]` | Products only. Empty means one implicit `default` variant. Ids never change. A variant thumbnail overrides the item's on forms. |
 | `components` | `{ itemId, variantId, qty, allocatedPrice? }[]` | Bundles only |
 | `notes` | string | |
 
@@ -54,6 +59,7 @@ Document id is the lower-cased Google email. An active document is the entire ac
 | Field | Type |
 | --- | --- |
 | `name`, `venue`, `notes` | string |
+| `code` | string, short upper-case code used in order IDs, e.g. `CF23`. Derived from the name when blank. |
 | `startDate`, `endDate` | `YYYY-MM-DD` |
 | `status` | `upcoming` \| `wrapped` |
 | `pickupDeadlineDays` | number, copied from settings at creation |
@@ -68,7 +74,7 @@ Document id is the lower-cased Google email. An active document is the entire ac
 | `status` | `draft` \| `open` \| `closed` \| `fulfilled` | Only one batch per event may be open |
 | `opensAt`, `closesAt` | `YYYY-MM-DD` or `''` | Informational |
 | `offering` | `{ itemId, variantId? }[]` | Bundles have no variantId. Order of the array is the order of fields on the form. |
-| `form` | map? | `{ provider: 'jotform', formId, url, fieldMap, customerFields, generatedAt }`. `fieldMap` maps a JotForm question id to a variant key or a bundle item id. Written by the functions. |
+| `form` | map? | `{ provider: 'inhouse', formId, url, generatedAt }` where `formId` equals the batch id and points at `forms/{formId}`. Legacy batches may still carry `{ provider: 'jotform', formId, url, fieldMap, customerFields, generatedAt }`. |
 | `planning` | map | Keyed by variant key: `{ onsiteExtra, ordered, received }`. All manual inputs. |
 
 ### `orders/{id}`
@@ -76,8 +82,10 @@ Document id is the lower-cased Google email. An active document is the entire ac
 | Field | Type | Notes |
 | --- | --- | --- |
 | `eventId`, `batchId` | string | |
-| `source` | `jotform` \| `manual` \| `web` | |
-| `externalId` | string | JotForm submission id. Re-delivered webhooks update the same document. |
+| `source` | `jotform` \| `manual` \| `web` | `web` is the in-house form |
+| `externalId` | string | `submissions` document id for `web`, JotForm submission id for `jotform`, empty for `manual` |
+| `transactionId` | string? | Sequential order ID `<eventcode>_<batch>_<seq>` (e.g. `CF23_1_0002`), one per payment. Allocated from `counters/{batchId}` in a transaction. |
+| `pickupDay` | string? | Chosen pickup day label, pickup orders only |
 | `submittedAt` | number | From the form |
 | `customer` | `{ name, email, phone, address? }` | |
 | `fulfilment` | `pickup` \| `mail` | |
@@ -110,6 +118,95 @@ Document id is the lower-cased Google email. An active document is the entire ac
 | `bundlesSold` | map keyed by bundle item id | count sold on site |
 | `finalizedAt`, `finalizedBy` | | |
 | `movementIds` | string[] | Movements this wrap-up posted, so un-finalising reverses exactly those |
+
+### `media/{id}`
+
+Images without Cloud Storage. Staff-only. Resized in the browser before saving: thumbnails to 240 px, header images to 1200 px.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `kind` | `thumbnail` \| `image` | |
+| `mime` | string | `image/jpeg` or `image/png` |
+| `dataUrl` | string | The image itself |
+| `width`, `height`, `bytes` | number | |
+| `name` | string | Original file name |
+| `createdAt`, `createdBy` | | Media documents are never updated, only replaced |
+
+### `forms/{batchId}`
+
+The editable form definition. Staff-only. The id equals the batch id, which is what ties a form to exactly one batch and one event forever.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `eventId`, `batchId` | string | Never change |
+| `title` | string | |
+| `theme` | `{ background, surface, accent, text, font, width, radius }` | Colours as hex, `font` one of `sans` \| `serif` \| `rounded`, `width` one of `narrow` \| `normal` \| `wide`, `radius` one of `sharp` \| `soft` \| `round` |
+| `blocks` | `FormBlock[]` | Ordered layout, see below |
+| `labels` | map | Every customer-facing string: field labels, button text, section titles. Bilingual defaults. |
+| `settings` | map | `{ pickupDays: string[], maxQtyPerLine, requirePhone, requireEmail, thankYouMessage, closedMessage }` |
+| `enabled` | boolean | Desired accepting state; mirrored to the public snapshot on publish and when the batch opens or closes |
+| `publishedAt` | number? | Last publish |
+| `publishedHash` | string? | Hash of the published definition, to show "changed since publish" |
+
+Block types (`type` plus fields):
+
+| Type | Fields | Notes |
+| --- | --- | --- |
+| `header` | `title, subtitle, imageId?` | |
+| `text` | `text` | Plain text, blank lines separate paragraphs. No HTML. |
+| `image` | `imageId, caption?, size: full \| half` | |
+| `divider` | | |
+| `section` | `title, description?` | |
+| `products` | `title?, source, layout: list \| grid, showThumbnails, showPrices` | `source` is `{ kind: 'type', type }`, `{ kind: 'bundles' }`, `{ kind: 'all' }`, or `{ kind: 'entries', keys: string[] }`. Resolved against the batch offering at publish time. |
+| `customer` | | Name, email, phone |
+| `fulfilment` | | Pickup or mail, pickup day, address. Omitted automatically on post batches (mail only). |
+| `notes` | | Free text from the customer |
+| `submit` | | Button |
+
+### `publicForms/{batchId}`
+
+The published snapshot. **Readable by anyone**, written by staff. Contains everything the customer page needs so that the catalogue, orders, and stock stay private. Images are inlined as data URLs; the whole document must stay under 1 MiB.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `formId`, `eventId`, `batchId` | string | |
+| `enabled` | boolean | `false` shows the closed message |
+| `mode` | `preorder` \| `post` | |
+| `title`, `theme`, `labels`, `settings` | | Copied from the form |
+| `currency` | string | From settings |
+| `blocks` | `PublicBlock[]` | Same as form blocks, except `products` blocks carry resolved `products` and image blocks carry `src` |
+| `items` | map keyed by offering key | `{ name, variantName, price, kind }`. The offering key is the variant key for products and the item id for bundles. Submission rules check line keys against this map. |
+| `maxQtyPerLine` | number | Copied for the rules |
+| `publishedAt`, `version` | number | `version` increments on every publish |
+
+A resolved product: `{ key, itemId, variantId?, name, variantName, price, thumb? }`, grouped per item in the block so variants render under one card.
+
+### `submissions/{id}`
+
+Written by the customer from the public page. Rules allow `create` only, for any signed-in user (customers sign in anonymously), with shape validation against `publicForms/{formId}`. Staff read and update.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `formId`, `eventId`, `batchId` | string | Must match the public form |
+| `version` | number | Public form version the customer saw |
+| `code` | string | Short confirmation code shown to the customer |
+| `customer` | `{ name, email, phone, address? }` | |
+| `fulfilment` | `pickup` \| `mail` | |
+| `pickupDay` | string? | |
+| `notes` | string | |
+| `lines` | `{ key, qty }[]` | Keys must exist in `publicForms.items`; `qty` an integer 1 … `maxQtyPerLine` |
+| `submittedAt` | number | Client clock; rules accept any number, import keeps it |
+| `status` | `new` \| `imported` \| `rejected` | Must be `new` on create |
+| `orderId` | string? | Set on import |
+| `rejectReason` | string? | Staff note when rejected |
+
+### `counters/{batchId}`
+
+`{ next: number }`. Staff-only. Read and incremented inside the same transaction that creates an order, so two staff importing at once cannot produce the same sequence number.
+
+### `formTemplates/{id}` (phase 2)
+
+`{ name, theme, blocks, labels, settings, isDefault }`. Blocks keep unresolved product sources so a template applies to any offering.
 
 ### `settings/global`
 
@@ -209,13 +306,19 @@ awaiting_shipment ──▶ shipped
 
 ## Security rules
 
-One rule for every document: allowed when the request carries an email claim and `staff/{email}` exists with `active == true`. There is no per-collection logic. The JotForm API key is a Cloud Functions secret, never in Firestore, because every staff member can read every document.
+Staff rule for every document: allowed when the request carries an email claim and `staff/{email}` exists with `active == true`. Two public exceptions exist for the customer form:
 
-## JotForm integration
+- `publicForms/{id}`: anyone may read.
+- `submissions/{id}`: any signed-in user (anonymous sign-in included) may create one document whose shape passes validation: the referenced public form exists and is enabled, every line key is in its `items` map, quantities are integers within the limit, strings are bounded, `status` is `new`, and no other fields are present. Nobody but staff can read, update, or delete submissions.
 
-- **Generate form** builds one JotForm from the batch offering: name, email, phone, a pickup-or-mail radio (omitted for post batches), an address textarea, then one numeric quantity field per offered variant or bundle, grouped under a header per item type. Question `name`s are deterministic (`v_<itemId>_<variantId>`, `b_<itemId>`) so a later re-sync can diff by name. The function then registers the webhook and writes `form.fieldMap` to the batch.
-- **Webhook** receives `formID` and `submissionID`, fetches the submission from the API, builds raw lines from every quantity field above zero at the current item price, expands bundles, and creates or updates the order by `externalId`.
-- **Re-import** fetches all submissions for the form and runs the same path. Safe to repeat.
-- **Re-sync fields** adds quantity fields for new offering entries and deletes fields for removed ones. Customer fields are never touched.
+Everything else stays staff-only. Customers never read the catalogue, orders, or stock.
 
-A future website form can read the batch offering and submit to a function that reuses the import path with `source = 'web'`.
+## In-house form
+
+- **Create form** (batch card) writes `forms/{batchId}` with a default layout built from the batch: header, intro text, customer block, fulfilment block (preorder batches only), one products block per item type present in the offering plus one for bundles, notes, submit. Labels default to the circle's bilingual wording. Pickup days default to each day of the event.
+- **Publish** resolves product blocks against the current offering and catalogue (names, variant names, prices with offering overrides, thumbnails), inlines images, checks the size, and writes `publicForms/{batchId}` with `version + 1`. Publishing again after editing the offering or layout is the equivalent of the old "Re-sync fields".
+- **Accepting** is `enabled` on the public snapshot. Opening a batch turns it on, closing turns it off; the Forms page can toggle it independently.
+- **Customer page** `/f/?id={batchId}` reads only the public snapshot, renders it with the theme, validates locally, signs in anonymously, and creates one `submissions` document. The thank-you screen shows the confirmation code and a summary.
+- **Import** runs in the staff app while it is open: a listener on `submissions` with `status == 'new'` processes each one in a transaction: read the counter, read the submission (must still be `new`), build raw lines at the offering price for that key, expand bundles, write the order with `source: 'web'`, `externalId` = submission id, `transactionId` from the counter, mark the submission `imported` with the order id. Unknown keys are skipped; a submission with no valid lines is marked `rejected`.
+- **Manual orders** take the next sequence number from the same counter.
+- A legacy batch with `provider: 'jotform'` still shows its JotForm link; its generation and import functions need Cloud Functions, which require the Blaze plan. See `docs/ROADMAP.md`.

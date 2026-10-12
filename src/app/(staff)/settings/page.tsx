@@ -95,8 +95,8 @@ export default function SettingsPage() {
           </Panel>
 
           <Panel>
-            <h2 className="font-bold mb-1">JotForm connection</h2>
-            <p className="hint mb-3">The API key is stored as a Cloud Functions secret, not here. See docs/DEPLOYMENT.md to set or rotate it.</p>
+            <h2 className="font-bold mb-1">JotForm connection (legacy)</h2>
+            <p className="hint mb-3">Only for batches that still use a JotForm. Needs the Cloud Functions deployed, which needs the Blaze plan. New batches use the in-house form.</p>
             <div className="flex items-center gap-3">
               <Button onClick={testJotform} busy={jf.state === 'busy'}>Test connection</Button>
               {jf.state === 'ok' && <Pill tone="green">{jf.text}</Pill>}
