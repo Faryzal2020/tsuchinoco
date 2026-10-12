@@ -39,3 +39,37 @@ export const newId = (len = 10): string => {
   for (let i = 0; i < len; i++) out += alphabet[bytes[i] % alphabet.length];
   return out;
 };
+
+export const variantOf = (item: Item | undefined, variantId?: string): Variant | undefined => {
+  if (!item || !variantId || variantId === DEFAULT_VARIANT_ID) return undefined;
+  return item.variants?.find((v) => v.id === variantId);
+};
+
+export const variantPrice = (item: Item | undefined, variantId?: string): number => {
+  if (!item) return 0;
+  const v = variantOf(item, variantId);
+  return typeof v?.price === 'number' ? v.price : item.price;
+};
+
+export const variantOtsPrice = (item: Item | undefined, variantId?: string): number => {
+  if (!item) return 0;
+  const v = variantOf(item, variantId);
+  if (typeof v?.otsPrice === 'number') return v.otsPrice;
+  if (typeof item.otsPrice === 'number') return item.otsPrice;
+  return variantPrice(item, variantId);
+};
+
+export const variantPriceJpy = (item: Item | undefined, variantId?: string): number | undefined => {
+  if (!item) return undefined;
+  const v = variantOf(item, variantId);
+  if (typeof v?.priceJpy === 'number') return v.priceJpy;
+  return item.priceJpy;
+};
+
+export const variantSku = (item: Item | undefined, variantId?: string): string => {
+  if (!item) return '';
+  const v = variantOf(item, variantId);
+  if (v?.sku) return v.sku;
+  return item.sku ?? '';
+};
+

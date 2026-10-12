@@ -1,6 +1,6 @@
 import type { Batch, Event, Item, Order, OrderLine, StockMovement, Wrapup } from '@/types';
 import { OPEN_ORDER_STATUSES } from '@/types';
-import { splitKey, variantKey, variantsOf } from './keys';
+import { splitKey, variantKey, variantsOf, variantOtsPrice } from './keys';
 
 export type QtyByKey = Map<string, number>;
 
@@ -230,11 +230,16 @@ export function walkinRevenue(rows: WrapupComputedRow[], bundlesSold: Record<str
   let total = 0;
   for (const [bundleId, count] of Object.entries(bundlesSold)) {
     const b = itemsById.get(bundleId);
-    if (b && count) total += count * b.price;
+    if (b && count) {
+      const price = b.otsPrice ?? b.price;
+      total += count * price;
+    }
   }
   for (const r of rows) {
     if (r.looseUnits === null || r.looseUnits <= 0) continue;
-    total += r.looseUnits * (itemsById.get(r.itemId)?.price ?? 0);
+    const item = itemsById.get(r.itemId);
+    const price = variantOtsPrice(item, r.variantId);
+    total += r.looseUnits * price;
   }
   return total;
 }

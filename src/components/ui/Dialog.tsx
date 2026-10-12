@@ -19,7 +19,7 @@ export function Modal({ open, onClose, title, children, footer, wide }: {
     if (!open && d.open) d.close();
   }, [open]);
   return (
-    <dialog ref={ref} className="modal" style={wide ? { maxWidth: 'min(860px, calc(100vw - 32px))' } : undefined} onClose={onClose} onCancel={(e) => { e.preventDefault(); onClose(); }}>
+    <dialog ref={ref} className="modal fixed inset-0 m-auto" style={wide ? { maxWidth: 'min(860px, calc(100vw - 32px))' } : undefined} onClose={onClose} onCancel={(e) => { e.preventDefault(); onClose(); }}>
       {open && (
         <div>
           <div className="flex items-center justify-between border-b border-line px-5 py-3">

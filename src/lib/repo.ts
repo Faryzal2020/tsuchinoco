@@ -83,6 +83,16 @@ export const itemRepo = {
       await b.commit();
     }
   },
+  bulkPatch: async (ids: string[], patchData: Partial<Item>, by: string) => {
+    for (let i = 0; i < ids.length; i += 400) {
+      const chunk = ids.slice(i, i + 400);
+      const b = writeBatch(db);
+      for (const id of chunk) {
+        b.update(doc(db, COL.items, id), clean({ ...patchData, ...touch(by) }));
+      }
+      await b.commit();
+    }
+  },
 };
 
 // ---- Events ----

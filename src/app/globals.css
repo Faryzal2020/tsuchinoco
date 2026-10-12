@@ -261,6 +261,9 @@ h1, h2, h3 { text-wrap: balance; letter-spacing: -0.01em; }
 .stat-num { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
 
 dialog.modal {
+  position: fixed;
+  inset: 0;
+  margin: auto;
   border: 1px solid var(--line-strong);
   border-radius: 12px;
   padding: 0;

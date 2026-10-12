@@ -82,7 +82,8 @@ function buildSpecs(batch: Batch, event: Event, items: Map<string, Item>): Spec[
     for (const { e, item } of entries) {
       const v = item.kind === 'product' ? item.variants?.find((x) => x.id === e.variantId) : undefined;
       const label = v ? `${item.name} · ${v.name}` : item.name;
-      push(fieldName(e, item), { type: 'control_number', text: `${label} (${money(item.price)})`, required: 'No', minValue: '0', maxValue: '99', defaultValue: '0', subLabel: 'quantity' }, fieldTarget(e, item));
+      const price = e.overridePrice ?? (typeof v?.price === 'number' ? v.price : item.price);
+      push(fieldName(e, item), { type: 'control_number', text: `${label} (${money(price)})`, required: 'No', minValue: '0', maxValue: '99', defaultValue: '0', subLabel: 'quantity' }, fieldTarget(e, item));
     }
   }
   push('submit', { type: 'control_button', text: 'Submit preorder' });

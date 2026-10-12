@@ -1,11 +1,11 @@
 // Mirror of the fields the functions touch. Keep in sync with src/types/index.ts.
-export interface Variant { id: string; name: string; active: boolean }
+export interface Variant { id: string; name: string; active: boolean; sku?: string; price?: number; otsPrice?: number }
 export interface BundleComponent { itemId: string; variantId: string; qty: number; allocatedPrice?: number }
 export interface Item {
-  id: string; name: string; kind: 'product' | 'bundle'; type: string; price: number; active: boolean;
+  id: string; name: string; kind: 'product' | 'bundle'; type: string; price: number; otsPrice?: number; active: boolean;
   variants: Variant[]; components: BundleComponent[];
 }
-export interface OfferingEntry { itemId: string; variantId?: string }
+export interface OfferingEntry { itemId: string; variantId?: string; overridePrice?: number; overrideOtsPrice?: number }
 export interface BatchForm {
   provider: 'jotform'; formId: string; url: string;
   fieldMap: Record<string, string>;
@@ -22,7 +22,8 @@ export interface OrderLine { itemId: string; variantId: string; qty: number; uni
 export type Fulfilment = 'pickup' | 'mail';
 export type OrderStatus = 'awaiting_pickup' | 'collected' | 'not_collected' | 'awaiting_shipment' | 'shipped' | 'cancelled';
 export interface Order {
-  eventId: string; batchId: string; source: 'jotform' | 'manual' | 'web'; externalId: string; submittedAt: number;
+  eventId: string; batchId: string; source: 'jotform' | 'manual' | 'web'; externalId: string;
+  transactionId?: string; pickupDay?: string; paymentProofUrl?: string; submittedAt: number;
   customer: { name: string; email: string; phone: string; address?: string };
   fulfilment: Fulfilment; status: OrderStatus; rawLines: RawLine[]; lines: OrderLine[]; total: number; notes: string;
   createdAt: number; updatedAt: number; updatedBy: string;

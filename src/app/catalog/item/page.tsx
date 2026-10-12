@@ -21,7 +21,8 @@ import { QueryPage, useQuery } from '@/lib/useQuery';
 type Draft = Omit<Item, 'id' | 'createdAt' | 'updatedAt' | 'updatedBy'>;
 
 const blank = (kind: 'product' | 'bundle', type: string, managerId: string): Draft => ({
-  name: '', kind, type: kind === 'bundle' ? 'bundle' : type, managerId, price: 0, producedAt: '', active: true,
+  name: '', sku: '', category: '', artist: '', kind, type: kind === 'bundle' ? 'bundle' : type, managerId, price: 0,
+  otsPrice: undefined, priceJpy: undefined, producedAt: '', active: true,
   variants: [], components: [], notes: '',
 });
 
@@ -45,7 +46,18 @@ function ItemEditor() {
     if (existing) {
       const { id: _id, createdAt: _c, updatedAt: _u, updatedBy: _b, ...rest } = existing;
       void _id; void _c; void _u; void _b;
-      setDraft({ ...rest, variants: rest.variants ?? [], components: rest.components ?? [], notes: rest.notes ?? '', producedAt: rest.producedAt ?? '' });
+      setDraft({
+        ...rest,
+        sku: rest.sku ?? '',
+        category: rest.category ?? '',
+        artist: rest.artist ?? '',
+        otsPrice: rest.otsPrice,
+        priceJpy: rest.priceJpy,
+        variants: rest.variants ?? [],
+        components: rest.components ?? [],
+        notes: rest.notes ?? '',
+        producedAt: rest.producedAt ?? '',
+      });
     } else if (isNew) {
       setDraft(blank(newKind === 'bundle' ? 'bundle' : 'product', settings.itemTypes[0] ?? 'other', me));
     }
@@ -78,7 +90,7 @@ function ItemEditor() {
   const up = (patch: Partial<Draft>) => setDraft((d) => (d ? { ...d, ...patch } : d));
   const isBundle = draft.kind === 'bundle';
 
-  const valid = draft.name.trim().length > 0 && draft.managerId && draft.price >= 0 &&
+  const valid = draft.name.trim().length > 0 && draft.price >= 0 &&
     (!isBundle || (draft.components.length > 0 && draft.components.every((c) => c.itemId && c.variantId && c.qty > 0)));
 
   const save = async () => {
@@ -87,10 +99,21 @@ function ItemEditor() {
     const data: Draft = {
       ...draft,
       name: draft.name.trim(),
-      variants: isBundle ? [] : draft.variants.filter((v) => v.name.trim()).map((v) => ({ ...v, name: v.name.trim() })),
+      sku: draft.sku?.trim() || undefined,
+      category: draft.category?.trim() || undefined,
+      artist: draft.artist?.trim() || undefined,
+      variants: isBundle
+        ? []
+        : draft.variants.filter((v) => v.name.trim()).map((v) => ({
+            ...v,
+            name: v.name.trim(),
+            sku: v.sku?.trim() || undefined,
+          })),
       components: isBundle ? draft.components : [],
     };
     if (data.cost === undefined || Number.isNaN(data.cost)) delete data.cost;
+    if (data.otsPrice === undefined || Number.isNaN(data.otsPrice)) delete data.otsPrice;
+    if (data.priceJpy === undefined || Number.isNaN(data.priceJpy)) delete data.priceJpy;
     const ok = await run(async () => {
       if (id) await itemRepo.patch(id, data, me);
       else {
@@ -134,7 +157,15 @@ function ItemEditor() {
         <div className="grid gap-5">
           <Panel>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Name" className="sm:col-span-2"><Input value={draft.name} onChange={(e) => up({ name: e.target.value })} autoFocus={isNew} /></Field>
+              <Field label="Name" className="sm:col-span-2">
+                <Input value={draft.name} onChange={(e) => up({ name: e.target.value })} autoFocus={isNew} />
+              </Field>
+              <Field label="Final ID / SKU" hint="e.g. J_AK_UMA_GIGI">
+                <Input value={draft.sku ?? ''} onChange={(e) => up({ sku: e.target.value })} placeholder="J_AK_UMA_" />
+              </Field>
+              <Field label="Category / Fandom" hint="e.g. HOLOUMA, HOLOMILK">
+                <Input value={draft.category ?? ''} onChange={(e) => up({ category: e.target.value })} placeholder="HOLOUMA" />
+              </Field>
               {!isBundle && (
                 <Field label="Type">
                   <Select value={draft.type} onChange={(e) => up({ type: e.target.value })}>
@@ -145,11 +176,23 @@ function ItemEditor() {
               )}
               <Field label="Product manager">
                 <Select value={draft.managerId} onChange={(e) => up({ managerId: e.target.value })}>
+                  <option value="">{draft.managerName ? `Unassigned (${draft.managerName})` : 'Unassigned'}</option>
                   {staff.filter((s) => s.active || s.id === draft.managerId).map((s) => <option key={s.id} value={s.id}>{s.displayName}</option>)}
                 </Select>
               </Field>
-              <Field label={`Price (${settings.currency})`}><Input type="number" min={0} value={draft.price} onChange={(e) => up({ price: Number(e.target.value) })} /></Field>
-              <Field label={`Unit cost (${settings.currency}), optional`} hint="Only used for the margin column on reports.">
+              <Field label="Artist / Credit" hint="Illustrator credit">
+                <Input value={draft.artist ?? ''} onChange={(e) => up({ artist: e.target.value })} placeholder="jknor719" />
+              </Field>
+              <Field label={`Pre-Order Price (${settings.currency})`}>
+                <Input type="number" min={0} value={draft.price} onChange={(e) => up({ price: Number(e.target.value) })} />
+              </Field>
+              <Field label={`On-The-Spot Price (${settings.currency})`} hint="Walk-in price (blank = same as PO)">
+                <Input type="number" min={0} placeholder={draft.price ? `${draft.price}` : ''} value={draft.otsPrice ?? ''} onChange={(e) => up({ otsPrice: e.target.value === '' ? undefined : Number(e.target.value) })} />
+              </Field>
+              <Field label="C107 / JPY Price (¥), optional" hint="Japan / foreign event price">
+                <Input type="number" min={0} placeholder="e.g. 500" value={draft.priceJpy ?? ''} onChange={(e) => up({ priceJpy: e.target.value === '' ? undefined : Number(e.target.value) })} />
+              </Field>
+              <Field label={`Unit cost (${settings.currency}), optional`} hint="Used for margin on reports">
                 <Input type="number" min={0} value={draft.cost ?? ''} onChange={(e) => up({ cost: e.target.value === '' ? undefined : Number(e.target.value) })} />
               </Field>
               {!isBundle && <Field label="Produced at" hint="Where this is made. Free text." className="sm:col-span-2"><Input value={draft.producedAt} onChange={(e) => up({ producedAt: e.target.value })} /></Field>}
@@ -158,7 +201,15 @@ function ItemEditor() {
             </div>
           </Panel>
 
-          {!isBundle && <VariantsEditor variants={draft.variants} onChange={(variants) => up({ variants })} usedIds={new Set(stock.filter((r) => r.onHand !== 0 || r.committed !== 0).map((r) => r.variantId))} />}
+          {!isBundle && (
+            <VariantsEditor
+              variants={draft.variants}
+              defaultPrice={draft.price}
+              defaultOtsPrice={draft.otsPrice}
+              onChange={(variants) => up({ variants })}
+              usedIds={new Set(stock.filter((r) => r.onHand !== 0 || r.committed !== 0).map((r) => r.variantId))}
+            />
+          )}
 
           {isBundle && (
             <Panel>
@@ -244,26 +295,99 @@ function ItemEditor() {
   );
 }
 
-function VariantsEditor({ variants, onChange, usedIds }: { variants: Variant[]; onChange: (v: Variant[]) => void; usedIds: Set<string> }) {
+function VariantsEditor({
+  variants,
+  defaultPrice,
+  defaultOtsPrice,
+  onChange,
+  usedIds,
+}: {
+  variants: Variant[];
+  defaultPrice: number;
+  defaultOtsPrice?: number;
+  onChange: (v: Variant[]) => void;
+  usedIds: Set<string>;
+}) {
   return (
     <Panel>
       <div className="mb-1 flex items-baseline justify-between">
         <h2 className="font-bold">Variants</h2>
         <span className="hint">Leave empty for an item with no variants.</span>
       </div>
-      <div className="grid gap-2 mt-3">
+      <div className="grid gap-2.5 mt-3">
         {variants.map((v, idx) => (
-          <div key={v.id} className="flex items-center gap-2">
-            <Input small value={v.name} placeholder="Variant name, e.g. EN / Tall / Character name" onChange={(e) => { const next = [...variants]; next[idx] = { ...v, name: e.target.value }; onChange(next); }} />
-            <Checkbox label="Active" checked={v.active} onChange={(e) => { const next = [...variants]; next[idx] = { ...v, active: e.target.checked }; onChange(next); }} />
-            {usedIds.has(v.id)
-              ? <span title="Has stock or orders, cannot be removed"><Pill>In use</Pill></span>
-              : <Button size="sm" variant="quiet" onClick={() => onChange(variants.filter((_, i) => i !== idx))}>Remove</Button>}
+          <div key={v.id} className="grid grid-cols-[minmax(0,1.2fr)_110px_95px_95px_auto_auto] items-center gap-2 p-2 border border-line rounded-md bg-surface-2/40">
+            <Input
+              small
+              value={v.name}
+              placeholder="Variant name (e.g. 2XL, Gigi)"
+              onChange={(e) => {
+                const next = [...variants];
+                next[idx] = { ...v, name: e.target.value };
+                onChange(next);
+              }}
+            />
+            <Input
+              small
+              value={v.sku ?? ''}
+              placeholder="SKU"
+              onChange={(e) => {
+                const next = [...variants];
+                next[idx] = { ...v, sku: e.target.value || undefined };
+                onChange(next);
+              }}
+            />
+            <Input
+              small
+              type="number"
+              min={0}
+              placeholder={`PO: ${defaultPrice}`}
+              value={v.price ?? ''}
+              title="Specific PO Price (blank = default)"
+              onChange={(e) => {
+                const next = [...variants];
+                const val = e.target.value === '' ? undefined : Number(e.target.value);
+                next[idx] = { ...v, price: val };
+                onChange(next);
+              }}
+            />
+            <Input
+              small
+              type="number"
+              min={0}
+              placeholder={`OTS: ${defaultOtsPrice ?? defaultPrice}`}
+              value={v.otsPrice ?? ''}
+              title="Specific OTS Price (blank = default)"
+              onChange={(e) => {
+                const next = [...variants];
+                const val = e.target.value === '' ? undefined : Number(e.target.value);
+                next[idx] = { ...v, otsPrice: val };
+                onChange(next);
+              }}
+            />
+            <Checkbox
+              label="Active"
+              checked={v.active}
+              onChange={(e) => {
+                const next = [...variants];
+                next[idx] = { ...v, active: e.target.checked };
+                onChange(next);
+              }}
+            />
+            {usedIds.has(v.id) ? (
+              <span title="Has stock or orders, cannot be removed"><Pill>In use</Pill></span>
+            ) : (
+              <Button size="sm" variant="quiet" onClick={() => onChange(variants.filter((_, i) => i !== idx))}>
+                Remove
+              </Button>
+            )}
           </div>
         ))}
       </div>
       <div className="mt-3">
-        <Button size="sm" onClick={() => onChange([...variants, { id: newId(6), name: '', active: true }])}>Add variant</Button>
+        <Button size="sm" onClick={() => onChange([...variants, { id: newId(6), name: '', active: true }])}>
+          Add variant
+        </Button>
       </div>
     </Panel>
   );

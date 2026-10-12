@@ -8,6 +8,10 @@ export interface Variant {
   id: string;
   name: string;
   active: boolean;
+  sku?: string;
+  price?: number;     // specific variant PO price (falls back to item.price)
+  otsPrice?: number;  // specific variant OTS price (falls back to item.otsPrice)
+  priceJpy?: number;  // optional C107 / JPY price (falls back to item.priceJpy)
 }
 
 export interface BundleComponent {
@@ -20,11 +24,17 @@ export interface BundleComponent {
 
 export interface Item {
   id: string;
+  sku?: string;
   name: string;
   kind: ItemKind;
   type: string;
+  category?: string;
+  artist?: string;
   managerId: string;
+  managerName?: string;
   price: number;
+  otsPrice?: number;
+  priceJpy?: number;
   cost?: number;
   producedAt: string;
   active: boolean;
@@ -69,6 +79,10 @@ export interface OfferingEntry {
   itemId: string;
   /** Absent for bundles. */
   variantId?: string;
+  /** Optional event-specific preorder price override */
+  overridePrice?: number;
+  /** Optional event-specific OTS/walk-in price override */
+  overrideOtsPrice?: number;
 }
 
 export interface BatchForm {
@@ -143,6 +157,9 @@ export interface Order {
   batchId: string;
   source: OrderSource;
   externalId: string;
+  transactionId?: string;
+  pickupDay?: string;
+  paymentProofUrl?: string;
   submittedAt: number;
   customer: { name: string; email: string; phone: string; address?: string };
   fulfilment: Fulfilment;
@@ -204,6 +221,16 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   currency: 'IDR',
-  itemTypes: ['standee', 'sticker', 'doujinshi', 'deskmat', 'keychain', 't-shirt', 'other'],
+  itemTypes: [
+    'Acrylic Keychain',
+    'Acrylic Standee',
+    'Book Comic',
+    'Poster A3',
+    'Poster A5',
+    'Sticker',
+    'T-Shirt',
+    'Bundle',
+    'Other',
+  ],
   pickupDeadlineDays: 30,
 };
