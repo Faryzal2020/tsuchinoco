@@ -26,8 +26,11 @@ interface ResolvedComponent {
   rawItemName: string;
   rawVariantText: string;
   matchedItem?: Item;
-  matchedVariantId: string;
+  isChoice: boolean;
+  matchedVariantId?: string;
   matchedVariantName?: string;
+  allowedVariantIds?: string[];
+  allowedVariantNames?: string[];
 }
 
 interface ResolvedBundle {
@@ -169,33 +172,63 @@ export default function BundleCsvImportModal({
           );
         }
 
+        let isChoice = false;
         let matchedVariantId = '';
         let matchedVariantName = '';
+        let allowedVariantIds: string[] | undefined;
+        let allowedVariantNames: string[] | undefined;
 
         if (matchedProduct && matchedProduct.variants && matchedProduct.variants.length > 0) {
-          // Clean variant text e.g. "(Gigi)" -> "Gigi"
-          const cleanVar = it.variantText.replace(/[()]/g, '').trim().toLowerCase();
-          if (cleanVar) {
-            // Split comma choices e.g. "JP,EN"
-            const choices = cleanVar.split(',').map((c) => c.trim().toLowerCase());
-            const found = matchedProduct.variants.find((v) =>
-              choices.some(
-                (c) =>
-                  v.name.toLowerCase() === c ||
-                  v.name.toLowerCase().includes(c) ||
-                  c.includes(v.name.toLowerCase())
-              )
+          // Clean variant text e.g. "(JP,EN)" -> "JP,EN", "(Gigi)" -> "Gigi"
+          const cleanVar = it.variantText.replace(/[()]/g, '').trim();
+          const tokens = cleanVar ? cleanVar.split(',').map((t) => t.trim()).filter(Boolean) : [];
+
+          if (tokens.length > 1) {
+            // Multiple options = customer choice!
+            isChoice = true;
+            const aIds: string[] = [];
+            const aNames: string[] = [];
+
+            tokens.forEach((tok) => {
+              const tokLower = tok.toLowerCase();
+              const found = matchedProduct!.variants.find(
+                (v) =>
+                  v.name.toLowerCase() === tokLower ||
+                  v.name.toLowerCase().includes(tokLower) ||
+                  tokLower.includes(v.name.toLowerCase())
+              );
+              if (found && !aIds.includes(found.id)) {
+                aIds.push(found.id);
+                aNames.push(found.name);
+              }
+            });
+
+            allowedVariantIds = aIds.length > 0 ? aIds : matchedProduct.variants.map((v) => v.id);
+            allowedVariantNames = aNames.length > 0 ? aNames : matchedProduct.variants.map((v) => v.name);
+          } else if (tokens.length === 1) {
+            // Single option = fixed variant
+            isChoice = false;
+            const tokLower = tokens[0].toLowerCase();
+            const found = matchedProduct.variants.find(
+              (v) =>
+                v.name.toLowerCase() === tokLower ||
+                v.name.toLowerCase().includes(tokLower) ||
+                tokLower.includes(v.name.toLowerCase())
             );
-            if (found) {
-              matchedVariantId = found.id;
-              matchedVariantName = found.name;
+            matchedVariantId = found ? found.id : (matchedProduct.variants[0]?.id || '');
+            matchedVariantName = found ? found.name : (matchedProduct.variants[0]?.name || '');
+          } else {
+            // No variant specified in CSV
+            if (matchedProduct.variants.length > 1) {
+              // Open choice across all variants
+              isChoice = true;
+              allowedVariantIds = matchedProduct.variants.map((v) => v.id);
+              allowedVariantNames = matchedProduct.variants.map((v) => v.name);
             } else {
+              isChoice = false;
               matchedVariantId = matchedProduct.variants[0]?.id || '';
               matchedVariantName = matchedProduct.variants[0]?.name || '';
             }
-          } else {
-            matchedVariantId = matchedProduct.variants[0]?.id || '';
-            matchedVariantName = matchedProduct.variants[0]?.name || '';
           }
         }
 
@@ -203,8 +236,11 @@ export default function BundleCsvImportModal({
           rawItemName: it.itemName,
           rawVariantText: it.variantText,
           matchedItem: matchedProduct,
+          isChoice,
           matchedVariantId,
           matchedVariantName,
+          allowedVariantIds,
+          allowedVariantNames,
         };
       });
 
@@ -250,11 +286,19 @@ export default function BundleCsvImportModal({
         const components: BundleComponent[] = [];
         for (const c of res.components) {
           if (!c.matchedItem) continue;
-          components.push({
-            itemId: c.matchedItem.id,
-            variantId: c.matchedVariantId || '',
-            qty: 1,
-          });
+          if (c.isChoice && c.allowedVariantIds && c.allowedVariantIds.length > 0) {
+            components.push({
+              itemId: c.matchedItem.id,
+              allowedVariantIds: c.allowedVariantIds,
+              qty: 1,
+            });
+          } else {
+            components.push({
+              itemId: c.matchedItem.id,
+              variantId: c.matchedVariantId || '',
+              qty: 1,
+            });
+          }
         }
 
         if (components.length > 0) {
@@ -298,11 +342,7 @@ export default function BundleCsvImportModal({
     >
       <div className="space-y-4">
         <p className="text-sm text-ink-2">
-          Upload your Bundles CSV sheet (e.g.{' '}
-          <code className="text-xs font-mono bg-cream-2 px-1.5 py-0.5 rounded border border-line">
-            0_MAIN Tsuchinoco CF23 Supersheet - Bundles.csv
-          </code>
-          ) to link products and variants to their parent bundle packages.
+          Upload your Bundles CSV sheet to link products and variants to their parent bundle packages.
         </p>
 
         {/* Upload File Input */}
@@ -338,9 +378,8 @@ export default function BundleCsvImportModal({
                 return (
                   <div
                     key={idx}
-                    className={`rounded-xl border p-3 bg-white transition-colors ${
-                      isMatched ? 'border-line' : 'border-amber-200 bg-amber-50/20'
-                    }`}
+                    className={`rounded-xl border p-3 bg-white transition-colors ${isMatched ? 'border-line' : 'border-amber-200 bg-amber-50/20'
+                      }`}
                   >
                     <div className="flex items-center justify-between border-b border-line pb-2 mb-2">
                       <div className="flex items-center gap-2">
@@ -375,11 +414,15 @@ export default function BundleCsvImportModal({
                             {c.matchedItem ? (
                               <span className="text-ink-2">
                                 → {c.matchedItem.name}{' '}
-                                {c.matchedVariantName && (
+                                {c.isChoice ? (
+                                  <span className="inline-flex items-center gap-1 font-semibold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200 text-[11px]">
+                                    Choice: {c.allowedVariantNames && c.allowedVariantNames.length > 0 ? c.allowedVariantNames.join(', ') : 'Any Variant'}
+                                  </span>
+                                ) : c.matchedVariantName ? (
                                   <span className="font-semibold text-blue-700">
                                     ({c.matchedVariantName})
                                   </span>
-                                )}
+                                ) : null}
                               </span>
                             ) : (
                               <span className="text-red-600 italic">No matching product in catalogue</span>

@@ -1,6 +1,6 @@
 import type { Batch, Event, Item, Order, OrderLine, StockMovement, Wrapup } from '@/types';
 import { OPEN_ORDER_STATUSES } from '@/types';
-import { splitKey, variantKey, variantsOf, variantOtsPrice } from './keys';
+import { DEFAULT_VARIANT_ID, splitKey, variantKey, variantsOf, variantOtsPrice } from './keys';
 
 export type QtyByKey = Map<string, number>;
 
@@ -83,7 +83,20 @@ export function offeringKeys(batch: Batch, itemsById: Map<string, Item>): string
     const item = itemsById.get(e.itemId);
     if (!item) continue;
     if (item.kind === 'bundle') {
-      for (const c of item.components) keys.add(variantKey(c.itemId, c.variantId));
+      for (const c of item.components) {
+        if (c.variantId) {
+          keys.add(variantKey(c.itemId, c.variantId));
+        } else if (c.allowedVariantIds && c.allowedVariantIds.length > 0) {
+          for (const vId of c.allowedVariantIds) keys.add(variantKey(c.itemId, vId));
+        } else {
+          const compItem = itemsById.get(c.itemId);
+          if (compItem) {
+            for (const v of variantsOf(compItem)) keys.add(variantKey(compItem.id, v.id));
+          } else {
+            keys.add(variantKey(c.itemId, DEFAULT_VARIANT_ID));
+          }
+        }
+      }
     } else if (e.variantId) {
       keys.add(variantKey(e.itemId, e.variantId));
     } else {
@@ -177,7 +190,10 @@ export function bundleUnitsByKey(bundlesSold: Record<string, number>, itemsById:
   for (const [bundleId, count] of Object.entries(bundlesSold)) {
     const b = itemsById.get(bundleId);
     if (!b || !count) continue;
-    for (const c of b.components) add(m, variantKey(c.itemId, c.variantId), c.qty * count);
+    for (const c of b.components) {
+      const vId = c.variantId ?? c.allowedVariantIds?.[0] ?? DEFAULT_VARIANT_ID;
+      add(m, variantKey(c.itemId, vId), c.qty * count);
+    }
   }
   return m;
 }
@@ -321,7 +337,11 @@ export function eventReport(
     const b = itemsById.get(bundleId);
     if (!b || !count) continue;
     const alloc = allocateForReport(b, itemsById);
-    for (const c of b.components) add(revenueByKey, variantKey(c.itemId, c.variantId), (alloc.get(variantKey(c.itemId, c.variantId)) ?? 0) * c.qty * count);
+    for (const c of b.components) {
+      const vId = c.variantId ?? c.allowedVariantIds?.[0] ?? DEFAULT_VARIANT_ID;
+      const vKey = variantKey(c.itemId, vId);
+      add(revenueByKey, vKey, (alloc.get(vKey) ?? alloc.get(c.itemId) ?? 0) * c.qty * count);
+    }
   }
   for (const r of rows) {
     if (r.looseUnits && r.looseUnits > 0) add(revenueByKey, r.key, r.looseUnits * (itemsById.get(r.itemId)?.price ?? 0));

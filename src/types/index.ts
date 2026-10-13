@@ -11,14 +11,16 @@ export interface Variant {
   sku?: string;
   price?: number;     // specific variant PO price (falls back to item.price)
   otsPrice?: number;  // specific variant OTS price (falls back to item.otsPrice)
-  priceJpy?: number;  // optional C107 / JPY price (falls back to item.priceJpy)
+  priceJpy?: number;  // optional JPY price (falls back to item.priceJpy)
   /** media id; overrides the item thumbnail on forms */
   thumbnailId?: string;
 }
 
 export interface BundleComponent {
   itemId: string;
-  variantId: string;
+  variantId?: string;
+  /** Allowed variant IDs if customer can choose (e.g. sizes or language editions) */
+  allowedVariantIds?: string[];
   qty: number;
   /** Explicit per-unit price for this component inside the bundle. Absent = proportional split. */
   allocatedPrice?: number;
@@ -158,6 +160,8 @@ export interface RawLine {
   qty: number;
   unitPrice: number;
   lineTotal: number;
+  /** If this line is a bundle, map of component itemId -> chosen variantId */
+  bundleSelections?: Record<string, string>;
 }
 
 export interface OrderLine {

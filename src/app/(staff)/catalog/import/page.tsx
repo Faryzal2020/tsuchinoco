@@ -16,7 +16,7 @@ import { CategoryPill, PageHeader, Panel, Pill, TableWrap } from '@/components/u
 type Draft = Omit<Item, 'id' | 'createdAt' | 'updatedAt' | 'updatedBy'>;
 interface Parsed { row: number; rowLabel?: string; draft: Draft; problems: string[] }
 
-const COLUMNS_HELP = 'Final ID / SKU, Nama Product (name), Tipe Merch (type), Category, Project Manager (manager), PO Price (price), OTS Price, C107 Price, Artist, variants, notes';
+const COLUMNS_HELP = 'Final ID / SKU, Nama Product (name), Tipe Merch (type), Category, Project Manager (manager), PO Price (price), OTS Price, JPY Price, Artist, variants, notes';
 
 export default function ImportPage() {
   const { items, staff, settings } = useData();
@@ -284,7 +284,7 @@ export default function ImportPage() {
               rows={8}
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder={`Final ID / SKU,Nama Product,Tipe Merch,Category,Project Manager,PO Price,OTS Price,C107 Price,Artist\nJ_AK_UMA_GIGI,Holouma Keychain by jknor719 (Gigi),Acrylic Keychain,HOLOUMA,Jaki,"Rp35,000","Rp35,000",,jknor719`}
+              placeholder={`Final ID / SKU,Nama Product,Tipe Merch,Category,Project Manager,PO Price,OTS Price,JPY Price,Artist\nJ_AK_UMA_GIGI,Holouma Keychain by jknor719 (Gigi),Acrylic Keychain,HOLOUMA,Jaki,"Rp35,000","Rp35,000",,jknor719`}
             />
           </Panel>
 
@@ -370,7 +370,7 @@ export default function ImportPage() {
             <ul className="text-sm text-ink-2 list-disc pl-5 grid gap-1">
               <li><b>Project Manager:</b> Automatically matched to staff. If the staff account doesn&apos;t exist yet, it safely saves their name as unassigned so you can import immediately!</li>
               <li><b>PO & OTS Price:</b> Supports formatted currency like <code>Rp35,000</code> or plain numbers.</li>
-              <li><b>C107 Price:</b> Optional foreign/JPY currency price.</li>
+              <li><b>JPY Price:</b> Optional foreign/JPY currency price.</li>
               <li><b>Category:</b> Grouping tag (e.g. <code>HOLOUMA</code>).</li>
             </ul>
           </Panel>

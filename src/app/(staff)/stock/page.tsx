@@ -237,9 +237,8 @@ function StockOverview() {
                   <td className="num">{r.committed}</td>
                   <td className="num font-semibold">{r.available}</td>
                   <td className="text-right">
-                    <Button
-                      size="sm"
-                      variant="quiet"
+                    <button
+                      type="button"
                       onClick={() => {
                         setKey(r.key);
                         setQty('');
@@ -248,13 +247,13 @@ function StockOverview() {
                       }}
                       title="Correct on-hand stock"
                       aria-label="Correct on-hand stock"
-                      className="p-1.5 text-ink-2 hover:text-ink hover:bg-surface-2 rounded-md transition-colors inline-flex items-center justify-center"
+                      className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-line bg-white text-ink hover:bg-cream hover:border-line-strong shadow-xs transition-all cursor-pointer"
                     >
-                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-[15px] h-[15px] text-ink">
                         <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
                         <path d="m15 5 4 4" />
                       </svg>
-                    </Button>
+                    </button>
                   </td>
                 </tr>
               );

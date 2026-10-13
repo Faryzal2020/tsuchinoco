@@ -135,7 +135,7 @@ export default function ItemEditorModal({
   const isBundle = draft.kind === 'bundle';
 
   const valid = draft.name.trim().length > 0 && draft.price >= 0 &&
-    (!isBundle || (draft.components.length > 0 && draft.components.every((c) => c.itemId && c.variantId && c.qty > 0)));
+    (!isBundle || (draft.components.length > 0 && draft.components.every((c) => c.itemId && (c.variantId || (c.allowedVariantIds && c.allowedVariantIds.length > 0)) && c.qty > 0)));
 
   const save = async () => {
     if (!valid) return;
@@ -149,10 +149,10 @@ export default function ItemEditorModal({
       variants: isBundle
         ? []
         : draft.variants.filter((v) => v.name.trim()).map((v) => ({
-            ...v,
-            name: v.name.trim(),
-            sku: v.sku?.trim() || undefined,
-          })),
+          ...v,
+          name: v.name.trim(),
+          sku: v.sku?.trim() || undefined,
+        })),
       components: isBundle ? draft.components : [],
     };
     if (data.cost === undefined || Number.isNaN(data.cost)) delete data.cost;
@@ -231,7 +231,7 @@ export default function ItemEditorModal({
           </div>
         }
       >
-        <div className="space-y-4">
+        <div className="space-y-4 min-h-[380px]">
           {/* Subheader tabs */}
           <div className="flex items-center justify-between border-b border-line pb-2">
             <div className="flex gap-2">
@@ -288,7 +288,7 @@ export default function ItemEditorModal({
                 <Input value={draft.name} onChange={(e) => up({ name: e.target.value })} autoFocus={isNew} placeholder="Product title" />
               </Field>
 
-              <Field label="Final ID / SKU" hint="e.g. J_AK_UMA_GIGI">
+              <Field label="Final ID / SKU" hint="e.g. J_AK_UMA_">
                 <Input value={draft.sku ?? ''} onChange={(e) => up({ sku: e.target.value })} placeholder="J_AK_UMA_" />
               </Field>
 
@@ -329,7 +329,7 @@ export default function ItemEditorModal({
                 <Input type="number" min={0} placeholder={draft.price ? `${draft.price}` : ''} value={draft.otsPrice ?? ''} onChange={(e) => up({ otsPrice: e.target.value === '' ? undefined : Number(e.target.value) })} />
               </Field>
 
-              <Field label="C107 / JPY Price (¥), optional" hint="Japan / foreign event price">
+              <Field label="JPY Price (¥), optional" hint="Japan / foreign event price">
                 <Input type="number" min={0} placeholder="e.g. 500" value={draft.priceJpy ?? ''} onChange={(e) => up({ priceJpy: e.target.value === '' ? undefined : Number(e.target.value) })} />
               </Field>
 
@@ -380,51 +380,132 @@ export default function ItemEditorModal({
               </div>
               <div className="grid gap-2">
                 {draft.components.map((c, idx) => {
-                  const key = c.itemId ? variantKey(c.itemId, c.variantId) : '';
-                  const proposed = alloc.get(key);
+                  const compItem = itemsById.get(c.itemId);
+                  const hasMultipleVariants = compItem && compItem.variants.length > 1;
+                  const isChoice = !c.variantId && c.allowedVariantIds && c.allowedVariantIds.length > 0;
+                  const key = c.itemId ? variantKey(c.itemId, c.variantId ?? c.allowedVariantIds?.[0] ?? '') : '';
+                  const proposed = alloc.get(key) ?? (c.itemId ? alloc.get(c.itemId) : undefined);
+
                   return (
-                    <div key={idx} className="grid grid-cols-[minmax(0,1fr)_70px_120px_auto] items-center gap-2">
-                      <VariantSelect
-                        small
-                        value={key}
-                        excludeItemId={itemId || undefined}
-                        onChange={(k) => {
-                          const next = [...draft.components];
-                          const { itemId: itmId, variantId } = k ? splitKey(k) : { itemId: '', variantId: '' };
-                          next[idx] = { ...c, itemId: itmId, variantId };
-                          up({ components: next });
-                        }}
-                      />
-                      <Input
-                        small
-                        type="number"
-                        min={1}
-                        value={c.qty}
-                        title="Quantity"
-                        onChange={(e) => {
-                          const next = [...draft.components];
-                          next[idx] = { ...c, qty: Number(e.target.value) };
-                          up({ components: next });
-                        }}
-                      />
-                      <Input
-                        small
-                        type="number"
-                        min={0}
-                        placeholder={proposed !== undefined ? `${proposed}` : 'auto'}
-                        value={c.allocatedPrice ?? ''}
-                        title="Allocated unit price"
-                        onChange={(e) => {
-                          const next = [...draft.components];
-                          const v = e.target.value;
-                          next[idx] = { ...c, allocatedPrice: v === '' ? undefined : Number(v) };
-                          if (v === '') delete next[idx].allocatedPrice;
-                          up({ components: next });
-                        }}
-                      />
-                      <Button size="sm" variant="quiet" onClick={() => up({ components: draft.components.filter((_, i) => i !== idx) })}>
-                        Remove
-                      </Button>
+                    <div key={idx} className="rounded-xl border border-line/70 bg-cream/30 p-2.5 space-y-2">
+                      <div className="grid grid-cols-[minmax(0,1fr)_70px_120px_auto] items-center gap-2">
+                        <VariantSelect
+                          small
+                          value={key}
+                          excludeItemId={itemId || undefined}
+                          onChange={(k) => {
+                            const next = [...draft.components];
+                            const { itemId: itmId, variantId } = k ? splitKey(k) : { itemId: '', variantId: '' };
+                            next[idx] = { ...c, itemId: itmId, variantId, allowedVariantIds: undefined };
+                            up({ components: next });
+                          }}
+                        />
+                        <Input
+                          small
+                          type="number"
+                          min={1}
+                          value={c.qty}
+                          title="Quantity"
+                          onChange={(e) => {
+                            const next = [...draft.components];
+                            next[idx] = { ...c, qty: Number(e.target.value) };
+                            up({ components: next });
+                          }}
+                        />
+                        <Input
+                          small
+                          type="number"
+                          min={0}
+                          placeholder={proposed !== undefined ? `${proposed}` : 'auto'}
+                          value={c.allocatedPrice ?? ''}
+                          title="Allocated unit price"
+                          onChange={(e) => {
+                            const next = [...draft.components];
+                            const v = e.target.value;
+                            next[idx] = { ...c, allocatedPrice: v === '' ? undefined : Number(v) };
+                            if (v === '') delete next[idx].allocatedPrice;
+                            up({ components: next });
+                          }}
+                        />
+                        <Button size="sm" variant="quiet" onClick={() => up({ components: draft.components.filter((_, i) => i !== idx) })}>
+                          Remove
+                        </Button>
+                      </div>
+
+                      {hasMultipleVariants && (
+                        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-line/40 text-xs">
+                          <span className="text-ink-2 font-medium">Customer Selection:</span>
+                          <button
+                            type="button"
+                            className={`px-2 py-0.5 rounded text-xs transition-colors ${!isChoice
+                              ? 'bg-primary text-primary-fg font-semibold'
+                              : 'bg-cream-2 text-ink-2 hover:bg-cream-3'
+                              }`}
+                            onClick={() => {
+                              const next = [...draft.components];
+                              next[idx] = {
+                                ...c,
+                                variantId: compItem.variants[0]?.id || '',
+                                allowedVariantIds: undefined,
+                              };
+                              up({ components: next });
+                            }}
+                          >
+                            Fixed Variant
+                          </button>
+                          <button
+                            type="button"
+                            className={`px-2 py-0.5 rounded text-xs transition-colors ${isChoice
+                              ? 'bg-purple-600 text-white font-semibold'
+                              : 'bg-cream-2 text-ink-2 hover:bg-cream-3'
+                              }`}
+                            onClick={() => {
+                              const next = [...draft.components];
+                              next[idx] = {
+                                ...c,
+                                variantId: undefined,
+                                allowedVariantIds: compItem.variants.map((v) => v.id),
+                              };
+                              up({ components: next });
+                            }}
+                          >
+                            Customer Choice
+                          </button>
+
+                          {isChoice && (
+                            <div className="flex flex-wrap items-center gap-1.5 ml-2">
+                              {compItem.variants.map((v) => {
+                                const checked = c.allowedVariantIds?.includes(v.id) ?? true;
+                                return (
+                                  <label
+                                    key={v.id}
+                                    className="inline-flex items-center gap-1 cursor-pointer bg-white px-1.5 py-0.5 rounded border border-line text-[11px]"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      className="rounded"
+                                      checked={checked}
+                                      onChange={(e) => {
+                                        const cur = c.allowedVariantIds ?? compItem.variants.map((x) => x.id);
+                                        const updated = e.target.checked
+                                          ? [...cur, v.id]
+                                          : cur.filter((id) => id !== v.id);
+                                        const next = [...draft.components];
+                                        next[idx] = {
+                                          ...c,
+                                          allowedVariantIds: updated.length > 0 ? updated : [v.id],
+                                        };
+                                        up({ components: next });
+                                      }}
+                                    />
+                                    <span>{v.name}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

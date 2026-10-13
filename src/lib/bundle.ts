@@ -19,7 +19,6 @@ export function allocateBundlePrice(
 
   let remaining = bundle.price;
   comps.forEach((c, idx) => {
-    const key = `${c.itemId}:${c.variantId}`;
     let unit: number;
     if (typeof c.allocatedPrice === 'number') {
       unit = c.allocatedPrice;
@@ -30,7 +29,10 @@ export function allocateBundlePrice(
     } else {
       unit = Math.round(bundle.price / comps.reduce((s, x) => s + x.qty, 0));
     }
-    out.set(key, unit);
+    out.set(c.itemId, unit);
+    if (c.variantId) {
+      out.set(`${c.itemId}:${c.variantId}`, unit);
+    }
     remaining -= unit * c.qty;
   });
   return out;
@@ -44,11 +46,23 @@ export function expandLines(rawLines: RawLine[], itemsById: Map<string, Item>): 
     if (item && item.kind === 'bundle') {
       const alloc = allocateBundlePrice({ price: raw.unitPrice, components: item.components }, itemsById);
       for (const c of item.components) {
+        const chosenVariantId =
+          raw.bundleSelections?.[c.itemId] ||
+          c.variantId ||
+          c.allowedVariantIds?.[0] ||
+          DEFAULT_VARIANT_ID;
+
+        const unitPrice =
+          alloc.get(`${c.itemId}:${chosenVariantId}`) ??
+          (c.variantId ? alloc.get(`${c.itemId}:${c.variantId}`) : undefined) ??
+          alloc.get(c.itemId) ??
+          0;
+
         lines.push({
           itemId: c.itemId,
-          variantId: c.variantId,
+          variantId: chosenVariantId,
           qty: c.qty * raw.qty,
-          unitPrice: alloc.get(`${c.itemId}:${c.variantId}`) ?? 0,
+          unitPrice,
           fromBundleItemId: item.id,
         });
       }

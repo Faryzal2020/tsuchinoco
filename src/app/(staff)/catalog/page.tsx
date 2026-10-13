@@ -599,19 +599,18 @@ function CatalogList() {
                       <td className="num font-semibold">{stock === null ? '—' : stock}</td>
                       <td>{i.active ? <Pill tone="green">Active</Pill> : <Pill tone="neutral">Inactive</Pill>}</td>
                       <td className="text-right" onClick={(e) => e.stopPropagation()}>
-                        <Button
-                          size="sm"
-                          variant="quiet"
+                        <button
+                          type="button"
                           onClick={() => setEditingItemId(i.id)}
                           title="Edit item"
                           aria-label="Edit item"
-                          className="p-1.5 text-ink-2 hover:text-ink hover:bg-surface-2 rounded-md transition-colors inline-flex items-center justify-center"
+                          className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-line bg-white text-ink hover:bg-cream hover:border-line-strong shadow-xs transition-all cursor-pointer"
                         >
-                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-[15px] h-[15px] text-ink">
                             <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
                             <path d="m15 5 4 4" />
                           </svg>
-                        </Button>
+                        </button>
                       </td>
                     </tr>
 
@@ -633,6 +632,7 @@ function CatalogList() {
                                   <th className="py-1 num">JPY Price</th>
                                   <th className="py-1 num">On Hand</th>
                                   <th className="py-1">Status</th>
+                                  <th className="py-1 text-right w-16">Action</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -664,6 +664,23 @@ function CatalogList() {
                                       <td className="py-1.5 num font-semibold">{vStock}</td>
                                       <td className="py-1.5">
                                         {v.active ? <Pill tone="green">Active</Pill> : <Pill tone="neutral">Inactive</Pill>}
+                                      </td>
+                                      <td className="py-1.5 text-right">
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setEditingItemId(i.id);
+                                          }}
+                                          title={`Edit ${v.name}`}
+                                          aria-label={`Edit ${v.name}`}
+                                          className="inline-flex items-center justify-center w-7 h-7 rounded border border-line bg-white text-ink hover:bg-cream hover:border-line-strong shadow-xs transition-all cursor-pointer"
+                                        >
+                                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-ink">
+                                            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                                            <path d="m15 5 4 4" />
+                                          </svg>
+                                        </button>
                                       </td>
                                     </tr>
                                   );
@@ -827,14 +844,24 @@ function CatalogList() {
                       <div className="grid gap-1.5 text-xs">
                         {b.components.map((c, idx) => {
                           const item = itemsById.get(c.itemId);
-                          const vName = variantName(item, c.variantId);
+                          const isChoice = !c.variantId && c.allowedVariantIds && c.allowedVariantIds.length > 0;
+                          const allowedNames = isChoice
+                            ? item?.variants.filter((v) => c.allowedVariantIds!.includes(v.id)).map((v) => v.name)
+                            : [];
+                          const vName = variantName(item, c.variantId || '');
                           const itemPrice = item?.price ?? 0;
                           return (
                             <div key={idx} className="flex justify-between items-center py-1 border-b border-line/40 last:border-0">
                               <div className="flex items-center gap-2">
                                 <span className="font-bold text-ink-2 mono">{c.qty}x</span>
                                 <span className="font-medium">{item?.name || 'Unknown item'}</span>
-                                {vName && <span className="text-ink-2">({vName})</span>}
+                                {isChoice ? (
+                                  <span className="text-[11px] font-semibold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">
+                                    Choice: {allowedNames && allowedNames.length > 0 ? allowedNames.join(', ') : 'Any Variant'}
+                                  </span>
+                                ) : vName ? (
+                                  <span className="text-ink-2">({vName})</span>
+                                ) : null}
                               </div>
                               <div className="text-ink-2">
                                 {c.allocatedPrice !== undefined ? (
