@@ -3,7 +3,7 @@
 // number. Prices come from the batch offering, never from the customer.
 import { doc, runTransaction } from 'firebase/firestore';
 import { db } from './firebase';
-import { COL, allocateTransactionId, clean } from './repo';
+import { COL, allocateTransactionId, clean, logActivity } from './repo';
 import { expandLines } from './bundle';
 import { entryPrice, offeringKey } from './forms';
 import { DEFAULT_VARIANT_ID, splitKey } from './keys';
@@ -38,7 +38,10 @@ export function rawLinesFromSubmission(lines: Record<string, number>, batch: Bat
 }
 
 export async function importSubmission(subId: string, ctx: ImportContext, by: string): Promise<ImportResult> {
-  return runTransaction(db, async (tx) => {
+  let createdTid = '';
+  let createdOrderId = '';
+
+  const res = await runTransaction(db, async (tx) => {
     const subRef = doc(db, COL.submissions, subId);
     const snap = await tx.get(subRef);
     if (!snap.exists()) return 'skipped';
@@ -61,6 +64,8 @@ export async function importSubmission(subId: string, ctx: ImportContext, by: st
     const fulfilment: Order['fulfilment'] = batch.mode === 'post' ? 'mail' : sub.fulfilment === 'mail' ? 'mail' : 'pickup';
     const now = Date.now();
     const orderId = doc(db, COL.orders).id;
+    createdTid = tid;
+    createdOrderId = orderId;
     const order: Omit<Order, 'id'> = {
       eventId: batch.eventId, batchId: batch.id, source: 'web', externalId: sub.id, transactionId: tid,
       pickupDay: fulfilment === 'pickup' ? sub.pickupDay : undefined,
@@ -80,4 +85,12 @@ export async function importSubmission(subId: string, ctx: ImportContext, by: st
     tx.update(subRef, { status: 'imported', orderId });
     return 'imported';
   });
+
+  if (res === 'imported' && createdTid) {
+    await logActivity('create', 'order', `Imported customer submission ${subId} into order ${createdTid}`, by, { entityId: createdOrderId, entityName: createdTid });
+  } else if (res === 'rejected') {
+    await logActivity('update', 'submission', `Rejected invalid submission ${subId}`, by, { entityId: subId });
+  }
+
+  return res;
 }

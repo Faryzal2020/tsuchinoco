@@ -410,3 +410,38 @@ export const DEFAULT_SETTINGS: Settings = {
   ],
   pickupDeadlineDays: 30,
 };
+
+export type LogAction =
+  | 'create'
+  | 'update'
+  | 'delete'
+  | 'bulk_create'
+  | 'bulk_update'
+  | 'bulk_delete'
+  | 'clear'
+  | 'publish'
+  | 'status_change';
+
+export type LogEntityType =
+  | 'item'
+  | 'event'
+  | 'batch'
+  | 'order'
+  | 'submission'
+  | 'form'
+  | 'staff'
+  | 'settings'
+  | 'movement'
+  | 'wrapup';
+
+export interface LogEntry {
+  id: string;
+  action: LogAction;
+  entityType: LogEntityType;
+  entityId?: string;
+  entityName?: string;
+  details: string;
+  createdAt: number;
+  createdBy: string;
+}
+

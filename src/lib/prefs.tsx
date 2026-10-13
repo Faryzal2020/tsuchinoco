@@ -10,6 +10,9 @@ interface Prefs {
   setCurrentEventId: (id: string) => void;
   mineOnly: boolean;
   setMineOnly: (v: boolean) => void;
+  /** When false, all delete-related buttons across the app are disabled (safety lock). */
+  allowDelete: boolean;
+  setAllowDelete: (v: boolean) => void;
   /** Filter helper honouring the "my items" toggle. */
   isMine: (item: Item | undefined) => boolean;
 }
@@ -17,6 +20,7 @@ interface Prefs {
 const Ctx = createContext<Prefs | null>(null);
 const KEY_EVENT = 'tsu.currentEvent';
 const KEY_MINE = 'tsu.mineOnly';
+const KEY_ALLOW_DELETE = 'tsu.allowDelete';
 
 const read = (k: string) => { try { return localStorage.getItem(k) ?? ''; } catch { return ''; } };
 const write = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } };
@@ -26,8 +30,14 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
   const { me } = useAuth();
   const [currentEventId, setEvt] = useState('');
   const [mineOnly, setMine] = useState(false);
+  const [allowDelete, setAllowDel] = useState(false);
 
-  useEffect(() => { setEvt(read(KEY_EVENT)); setMine(read(KEY_MINE) === '1'); }, []);
+  useEffect(() => {
+    setEvt(read(KEY_EVENT));
+    setMine(read(KEY_MINE) === '1');
+    const delVal = read(KEY_ALLOW_DELETE);
+    setAllowDel(delVal === '1');
+  }, []);
 
   // Default to the nearest upcoming event when nothing is chosen or the chosen one is gone.
   useEffect(() => {
@@ -43,8 +53,10 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
     setCurrentEventId: (id) => { setEvt(id); write(KEY_EVENT, id); },
     mineOnly,
     setMineOnly: (v) => { setMine(v); write(KEY_MINE, v ? '1' : '0'); },
+    allowDelete,
+    setAllowDelete: (v) => { setAllowDel(v); write(KEY_ALLOW_DELETE, v ? '1' : '0'); },
     isMine: (item) => !mineOnly || !item || item.managerId === me,
-  }), [currentEventId, mineOnly, me]);
+  }), [currentEventId, mineOnly, allowDelete, me]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

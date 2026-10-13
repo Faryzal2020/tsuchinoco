@@ -8,13 +8,13 @@ import { useToast } from '@/components/ui/Toast';
 import { itemRepo } from '@/lib/repo';
 import { parseCsv, type CsvRow } from '@/lib/csv';
 import { newId } from '@/lib/keys';
-import type { Item } from '@/types';
+import type { Item, Variant } from '@/types';
 import Button from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Field';
-import { PageHeader, Panel, Pill, TableWrap } from '@/components/ui/Bits';
+import { CategoryPill, PageHeader, Panel, Pill, TableWrap } from '@/components/ui/Bits';
 
 type Draft = Omit<Item, 'id' | 'createdAt' | 'updatedAt' | 'updatedBy'>;
-interface Parsed { row: number; draft: Draft; problems: string[] }
+interface Parsed { row: number; rowLabel?: string; draft: Draft; problems: string[] }
 
 const COLUMNS_HELP = 'Final ID / SKU, Nama Product (name), Tipe Merch (type), Category, Project Manager (manager), PO Price (price), OTS Price, C107 Price, Artist, variants, notes';
 
@@ -39,67 +39,220 @@ export default function ImportPage() {
       return Number.isFinite(n) && n >= 0 ? Math.round(n) : undefined;
     };
 
-    const out: Parsed[] = rows.map((r: CsvRow, idx) => {
-      const problems: string[] = [];
+    interface RawExtracted {
+      rowIdx: number;
+      rowNumber: number;
+      rawName: string;
+      baseName: string;
+      variantName: string;
+      isVariantPattern: boolean;
+      explicitVariants: string[];
+      sku: string;
+      prefixSku: string;
+      matchedType: string;
+      mgrId: string;
+      mgrName?: string;
+      poPrice: number;
+      rawPo: string;
+      otsPrice?: number;
+      priceJpy?: number;
+      cost?: number;
+      category?: string;
+      artist?: string;
+      producedAt: string;
+      notes: string;
+    }
 
-      // Name resolution
-      const name = (r['Nama Product'] || r.name || '').trim();
-      if (!name) problems.push('Missing name');
-      if (existingNames.has(name.toLowerCase())) problems.push('An item with this name already exists');
+    const extracted: RawExtracted[] = [];
 
-      // SKU resolution
-      const sku = (r['Final ID / SKU'] || r.sku || r['Unique ID / SKU'] || '').trim();
+    rows.forEach((r: CsvRow, idx: number) => {
+      const rawName = (r['Nama Product'] || r.name || '').trim();
+      if (!rawName) return;
 
-      // Type resolution (fuzzy / case-insensitive)
+      const rawVariants = (r.variants || r.Variants || '').trim();
+      const explicitVariants = rawVariants
+        ? rawVariants.split('|').map((v) => v.trim()).filter(Boolean)
+        : [];
+
+      // Check for "Base Name (Variant Name)"
+      const match = rawName.match(/^(.+?)\s*\(([^)]+)\)$/);
+      const isVariantPattern = !explicitVariants.length && !!match;
+      const baseName = match ? match[1].replace(/\s+/g, ' ').trim() : rawName.replace(/\s+/g, ' ').trim();
+      const variantName = match ? match[2].trim() : '';
+
+      const prefixSku = (r['ID / SKU Prefix'] || '').trim();
+      const sku = (r['Final ID / SKU'] || r.sku || r['Unique ID / SKU'] || prefixSku).trim();
+
       const rawType = (r['Tipe Merch'] || r.type || '').trim();
       const matchedType = settings.itemTypes.find((t) => t.toLowerCase() === rawType.toLowerCase()) || rawType || settings.itemTypes[0];
 
-      // Manager resolution (Non-blocking: if staff not found, save managerName and allow import)
       const mgrRaw = (r['Project Manager'] || r.manager || '').trim();
       const mgrText = mgrRaw.toLowerCase();
       const mgr = staffByEmail.get(mgrText) ?? staffByName.get(mgrText);
 
-      // Price resolution (PO Price, OTS Price, C107 Price)
       const rawPo = (r['PO Price'] || r.price || '').trim();
-      const poPrice = rawPo ? cleanNum(rawPo) : 0;
-      if (rawPo && poPrice === undefined) problems.push('Bad PO price');
+      const poPrice = rawPo ? (cleanNum(rawPo) ?? 0) : 0;
       const otsPrice = cleanNum(r['OTS Price'] || r.otsPrice);
       const priceJpy = cleanNum(r['C107 Price'] || r.priceJpy || r['JPY Price']);
       const cost = cleanNum(r.cost || r.Cost);
 
-      // Category & Artist
       const category = (r.Category || r.category || '').trim();
       const artist = (r.Artist || r.artist || '').trim();
+      const producedAt = (r.producedAt || r.ProducedAt || '').trim();
+      const notes = (r.notes || r.Notes || '').trim();
 
-      // Variants
-      const rawVariants = (r.variants || r.Variants || '').trim();
-      const variants = rawVariants
-        ? rawVariants.split('|').map((v) => v.trim()).filter(Boolean).map((v) => ({ id: newId(6), name: v, active: true }))
-        : [];
-
-      const draft: Draft = {
-        name,
-        sku: sku || undefined,
-        kind: (matchedType.toLowerCase() === 'bundle' ? 'bundle' : 'product') as Item['kind'],
-        type: matchedType,
-        category: category || undefined,
-        artist: artist || undefined,
-        managerId: mgr?.id ?? '',
-        managerName: !mgr && mgrRaw ? mgrRaw : undefined,
-        price: poPrice ?? 0,
-        otsPrice: otsPrice !== undefined ? otsPrice : poPrice,
+      extracted.push({
+        rowIdx: idx,
+        rowNumber: idx + 2,
+        rawName,
+        baseName,
+        variantName,
+        isVariantPattern,
+        explicitVariants,
+        sku,
+        prefixSku,
+        matchedType,
+        mgrId: mgr?.id ?? '',
+        mgrName: !mgr && mgrRaw ? mgrRaw : undefined,
+        poPrice,
+        rawPo,
+        otsPrice,
         priceJpy,
         cost,
-        producedAt: (r.producedAt || r.ProducedAt || '').trim(),
+        category: category || undefined,
+        artist: artist || undefined,
+        producedAt,
+        notes,
+      });
+    });
+
+    // Count rows sharing baseName + category
+    const countByBaseKey = new Map<string, number>();
+    extracted.forEach((item) => {
+      if (item.isVariantPattern) {
+        const key = `${item.baseName.toLowerCase()}:::${(item.category || '').toLowerCase()}`;
+        countByBaseKey.set(key, (countByBaseKey.get(key) ?? 0) + 1);
+      }
+    });
+
+    const groupedMap = new Map<string, RawExtracted[]>();
+    const outItems: Parsed[] = [];
+
+    extracted.forEach((item) => {
+      const key = `${item.baseName.toLowerCase()}:::${(item.category || '').toLowerCase()}`;
+      const count = countByBaseKey.get(key) ?? 0;
+
+      if (item.isVariantPattern && count > 1) {
+        if (!groupedMap.has(key)) {
+          groupedMap.set(key, []);
+        }
+        groupedMap.get(key)!.push(item);
+      } else {
+        // Individual standalone item
+        const problems: string[] = [];
+        if (existingNames.has(item.rawName.toLowerCase())) {
+          problems.push('An item with this name already exists');
+        }
+        if (item.rawPo && item.poPrice === undefined) {
+          problems.push('Bad PO price');
+        }
+
+        const variants = item.explicitVariants.map((v) => ({
+          id: newId(6),
+          name: v,
+          active: true,
+        }));
+
+        const draft: Draft = {
+          name: item.rawName,
+          sku: item.sku || undefined,
+          kind: (item.matchedType.toLowerCase() === 'bundle' ? 'bundle' : 'product') as Item['kind'],
+          type: item.matchedType,
+          category: item.category,
+          artist: item.artist,
+          managerId: item.mgrId,
+          managerName: item.mgrName,
+          price: item.poPrice,
+          otsPrice: item.otsPrice !== undefined ? item.otsPrice : item.poPrice,
+          priceJpy: item.priceJpy,
+          cost: item.cost,
+          producedAt: item.producedAt,
+          active: true,
+          variants,
+          components: [],
+          notes: item.notes,
+        };
+
+        outItems.push({
+          row: item.rowNumber,
+          draft,
+          problems,
+        });
+      }
+    });
+
+    // Grouped multi-variant items
+    groupedMap.forEach((groupRows) => {
+      const first = groupRows[0];
+      const last = groupRows[groupRows.length - 1];
+      const problems: string[] = [];
+
+      if (existingNames.has(first.baseName.toLowerCase())) {
+        problems.push('An item with this name already exists');
+      }
+
+      groupRows.forEach((r) => {
+        if (r.rawPo && r.poPrice === undefined) {
+          problems.push(`Row ${r.rowNumber}: Bad PO price`);
+        }
+      });
+
+      const variants: Variant[] = groupRows.map((r) => ({
+        id: newId(6),
+        name: r.variantName,
+        sku: r.sku || undefined,
+        price: r.poPrice,
+        otsPrice: r.otsPrice !== undefined ? r.otsPrice : r.poPrice,
+        priceJpy: r.priceJpy,
+        active: true,
+      }));
+
+      const minPo = Math.min(...variants.map((v) => v.price ?? first.poPrice));
+      const minOts = Math.min(...variants.map((v) => v.otsPrice ?? (first.otsPrice ?? minPo)));
+      const baseSku = first.prefixSku || (first.sku && first.sku.includes('_') ? first.sku.substring(0, first.sku.lastIndexOf('_')) : first.sku);
+
+      const draft: Draft = {
+        name: first.baseName,
+        sku: baseSku || undefined,
+        kind: (first.matchedType.toLowerCase() === 'bundle' ? 'bundle' : 'product') as Item['kind'],
+        type: first.matchedType,
+        category: first.category,
+        artist: first.artist,
+        managerId: first.mgrId,
+        managerName: first.mgrName,
+        price: minPo,
+        otsPrice: minOts,
+        priceJpy: first.priceJpy,
+        cost: first.cost,
+        producedAt: first.producedAt,
         active: true,
         variants,
         components: [],
-        notes: (r.notes || r.Notes || '').trim(),
+        notes: first.notes,
       };
 
-      return { row: idx + 2, draft, problems };
+      outItems.push({
+        row: first.rowNumber,
+        rowLabel: `${first.rowNumber}–${last.rowNumber}`,
+        draft,
+        problems,
+      });
     });
-    return { rows: out, errors };
+
+    // Sort by row number to match original CSV sequence
+    outItems.sort((a, b) => a.row - b.row);
+
+    return { rows: outItems, errors };
   }, [text, staff, items, settings.itemTypes]);
 
   const good = parsed.rows.filter((r) => r.problems.length === 0);
@@ -161,14 +314,27 @@ export default function ImportPage() {
                 </tr>
               </thead>
               <tbody>
-                {parsed.rows.map((r) => {
+                {parsed.rows.map((r, idx) => {
                   const staffMember = staff.find((s) => s.id === r.draft.managerId);
+                  const hasVars = r.draft.variants.length > 0;
+                  const poPrices = hasVars ? r.draft.variants.map((v) => v.price ?? r.draft.price) : [r.draft.price];
+                  const minPo = Math.min(...poPrices);
+                  const maxPo = Math.max(...poPrices);
+                  const poDisplay = minPo === maxPo ? minPo.toLocaleString() : `${minPo.toLocaleString()} – ${maxPo.toLocaleString()}`;
+
                   return (
-                    <tr key={r.row}>
-                      <td className="mono">{r.row}</td>
+                    <tr key={`${r.row}-${idx}`}>
+                      <td className="mono text-xs">{r.rowLabel || r.row}</td>
                       <td className="mono text-xs">{r.draft.sku || '—'}</td>
-                      <td className="font-semibold">{r.draft.name}</td>
-                      <td>{r.draft.category ? <Pill tone="blue">{r.draft.category}</Pill> : '—'}</td>
+                      <td>
+                        <span className="font-semibold">{r.draft.name}</span>
+                        {hasVars && (
+                          <span className="ml-2 pill pill-blue text-[11px] py-0 px-1.5" title={r.draft.variants.map((v) => v.name).join(', ')}>
+                            {r.draft.variants.length} vars
+                          </span>
+                        )}
+                      </td>
+                      <td><CategoryPill category={r.draft.category} /></td>
                       <td>{r.draft.type}</td>
                       <td>
                         {staffMember ? (
@@ -179,7 +345,7 @@ export default function ImportPage() {
                           <span className="text-ink-2">—</span>
                         )}
                       </td>
-                      <td className="num">{r.draft.price.toLocaleString()}</td>
+                      <td className="num">{poDisplay}</td>
                       <td className="num">{r.draft.otsPrice ? r.draft.otsPrice.toLocaleString() : '—'}</td>
                       <td className="num">{r.draft.priceJpy ? `¥${r.draft.priceJpy.toLocaleString()}` : '—'}</td>
                       <td>

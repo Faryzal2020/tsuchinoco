@@ -11,6 +11,40 @@ export function Pill({ tone = 'neutral', children, className }: { tone?: Tone; c
   return <span className={cn('pill', `pill-${tone}`, className)}>{children}</span>;
 }
 
+const CATEGORY_STYLES = [
+  'bg-sky-100 text-sky-800 border-sky-300',
+  'bg-emerald-100 text-emerald-800 border-emerald-300',
+  'bg-amber-100 text-amber-900 border-amber-300',
+  'bg-purple-100 text-purple-800 border-purple-300',
+  'bg-rose-100 text-rose-800 border-rose-300',
+  'bg-teal-100 text-teal-800 border-teal-300',
+  'bg-indigo-100 text-indigo-800 border-indigo-300',
+  'bg-orange-100 text-orange-900 border-orange-300',
+  'bg-pink-100 text-pink-800 border-pink-300',
+  'bg-violet-100 text-violet-800 border-violet-300',
+  'bg-cyan-100 text-cyan-800 border-cyan-300',
+  'bg-lime-100 text-lime-800 border-lime-300',
+];
+
+export function getCategoryColor(category: string): string {
+  if (!category || !category.trim()) return 'bg-cream-2 text-ink-2 border-line';
+  const clean = category.trim().toUpperCase();
+  let hash = 0;
+  for (let i = 0; i < clean.length; i++) {
+    hash = (hash * 31 + clean.charCodeAt(i)) >>> 0;
+  }
+  return CATEGORY_STYLES[hash % CATEGORY_STYLES.length];
+}
+
+export function CategoryPill({ category, className }: { category?: string; className?: string }) {
+  if (!category) return <span className="text-ink-2">—</span>;
+  return (
+    <span className={cn('pill border font-medium text-xs', getCategoryColor(category), className)}>
+      {category}
+    </span>
+  );
+}
+
 const STATUS_TONES: Record<string, Tone> = {
   awaiting_pickup: 'yellow',
   collected: 'green',
