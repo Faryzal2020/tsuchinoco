@@ -7,7 +7,7 @@ import React, { useMemo, useState } from 'react';
 import type { Fulfilment, PublicBlock, PublicForm, PublicProductGroup, Submission } from '@/types';
 import { confirmationCode, labelOf, type FormLabelKey } from '@/lib/forms';
 import { formatMoney } from '@/lib/format';
-import { XCircle } from 'lucide-react';
+import { ArrowDown, ChevronDown, ChevronUp, ShoppingCart, Trash2, XCircle } from 'lucide-react';
 
 type Snapshot = Omit<PublicForm, 'id'>;
 export type SubmissionDraft = Omit<Submission, 'id'>;
@@ -161,6 +161,15 @@ export default function FormRenderer({ form, preview, onSubmit, onRemoveProduct 
         )}
         <div className="pf-footer">{form.title}</div>
       </div>
+      {!closed && phase === 'form' && (
+        <FloatingCart
+          chosen={chosen}
+          total={total}
+          currency={form.currency}
+          max={max}
+          setQ={setQ}
+        />
+      )}
     </div>
   );
 }
@@ -652,6 +661,158 @@ function Stepper({ value, max, onChange, label }: { value: number; max: number; 
       <button type="button" aria-label="Less" disabled={value <= 0} onClick={() => onChange(value - 1)}>−</button>
       <input type="number" inputMode="numeric" min={0} max={max} value={value} aria-label={label} onChange={(e) => onChange(Number(e.target.value))} onFocus={(e) => e.target.select()} />
       <button type="button" aria-label="More" disabled={value >= max} onClick={() => onChange(value + 1)}>+</button>
+    </div>
+  );
+}
+
+interface FloatingCartProps {
+  chosen: { key: string; qty: number; item: Snapshot['items'][string] }[];
+  total: number;
+  currency: string;
+  max: number;
+  setQ: (key: string, v: number) => void;
+}
+
+function FloatingCart({ chosen, total, currency, max, setQ }: FloatingCartProps) {
+  const [userMinimized, setUserMinimized] = useState<boolean | null>(null);
+  const totalCount = chosen.reduce((acc, l) => acc + l.qty, 0);
+
+  // Auto-expand when items are added unless user explicitly minimized
+  const isMinimized = userMinimized ?? (chosen.length === 0);
+
+  return (
+    <div className="pf-floating-cart">
+      {isMinimized ? (
+        <button
+          type="button"
+          onClick={() => setUserMinimized(false)}
+          className="pf-floating-cart-minimized"
+          title="Expand cart summary"
+          aria-label="Expand cart summary"
+        >
+          <div className="pf-cart-icon-wrap">
+            <ShoppingCart size={17} className="pf-cart-icon" />
+            {totalCount > 0 && <span className="pf-cart-count-badge">{totalCount}</span>}
+          </div>
+          <div className="pf-cart-min-text">
+            <span className="pf-cart-min-label">
+              {totalCount === 0 ? 'Cart (0)' : `${totalCount} item${totalCount === 1 ? '' : 's'}`}
+            </span>
+            {totalCount > 0 && (
+              <span className="pf-cart-min-price">
+                {formatMoney(total, currency)}
+              </span>
+            )}
+          </div>
+          <ChevronUp size={16} className="pf-cart-expand-icon" />
+        </button>
+      ) : (
+        <div className="pf-floating-cart-card">
+          <div className="pf-cart-header">
+            <div className="pf-cart-title-row">
+              <ShoppingCart size={18} className="pf-cart-header-icon" />
+              <span className="pf-cart-title">Your Order</span>
+              <span className="pf-cart-badge">
+                {totalCount} {totalCount === 1 ? 'item' : 'items'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setUserMinimized(true)}
+              className="pf-cart-min-btn"
+              title="Minimize cart"
+              aria-label="Minimize cart"
+            >
+              <ChevronDown size={18} />
+            </button>
+          </div>
+
+          <div className="pf-cart-body">
+            {chosen.length === 0 ? (
+              <div className="pf-cart-empty">
+                <ShoppingCart size={28} className="pf-cart-empty-icon" />
+                <div className="pf-cart-empty-text">Your cart is empty</div>
+                <div className="pf-cart-empty-hint">Pick items above to start your order</div>
+              </div>
+            ) : (
+              <div className="pf-cart-items-list">
+                {chosen.map((line) => (
+                  <div key={line.key} className="pf-cart-item-row">
+                    <div className="pf-cart-item-info">
+                      <span className="pf-cart-item-name" title={line.item.name}>
+                        {line.item.name}
+                      </span>
+                      {line.item.variantName && (
+                        <span className="pf-cart-item-variant" title={line.item.variantName}>
+                          {line.item.variantName}
+                        </span>
+                      )}
+                      <span className="pf-cart-item-subtotal">
+                        {formatMoney(line.qty * line.item.price, currency)}
+                      </span>
+                    </div>
+
+                    <div className="pf-cart-item-actions">
+                      <div className="pf-cart-stepper">
+                        <button
+                          type="button"
+                          onClick={() => setQ(line.key, line.qty - 1)}
+                          className="pf-cart-stepper-btn"
+                          title="Decrease quantity"
+                          aria-label="Decrease quantity"
+                        >
+                          −
+                        </button>
+                        <span className="pf-cart-stepper-val">{line.qty}</span>
+                        <button
+                          type="button"
+                          onClick={() => setQ(line.key, line.qty + 1)}
+                          disabled={line.qty >= max}
+                          className="pf-cart-stepper-btn"
+                          title="Increase quantity"
+                          aria-label="Increase quantity"
+                        >
+                          +
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setQ(line.key, 0)}
+                        className="pf-cart-remove-btn"
+                        title="Remove item"
+                        aria-label={`Remove ${line.item.name}`}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="pf-cart-footer">
+            <div className="pf-cart-total-row">
+              <span className="pf-cart-total-label">Total Cost</span>
+              <span className="pf-cart-total-val">{formatMoney(total, currency)}</span>
+            </div>
+
+            {chosen.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const submitEl = document.querySelector('.pf-card.pf-grid, .pf-submit, form');
+                  submitEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }}
+                className="pf-cart-checkout-btn"
+              >
+                <span>Proceed to Details</span>
+                <ArrowDown size={14} />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

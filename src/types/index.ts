@@ -445,6 +445,12 @@ export type LogEntityType =
   | 'movement'
   | 'wrapup';
 
+export interface FieldChange {
+  field: string;
+  before: unknown;
+  after: unknown;
+}
+
 export interface LogEntry {
   id: string;
   action: LogAction;
@@ -454,5 +460,6 @@ export interface LogEntry {
   details: string;
   createdAt: number;
   createdBy: string;
+  changes?: FieldChange[];
 }
 

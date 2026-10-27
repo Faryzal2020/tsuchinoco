@@ -846,7 +846,7 @@ function FormStudio() {
           {/* Preview Canvas Window */}
           <div className="flex justify-center bg-zinc-100 rounded-xl p-4 border border-line h-[calc(100vh-210px)] min-h-[500px] overscroll-contain overflow-hidden">
             <div
-              className={`transition-all duration-300 w-full h-full max-h-full min-h-0 overflow-y-auto overscroll-contain ${
+              className={`transition-all duration-300 w-full h-full max-h-full min-h-0 overflow-y-auto overscroll-contain relative transform-gpu ${
                 viewport === 'mobile'
                   ? 'max-w-[400px] shadow-xl rounded-2xl border-4 border-zinc-700 bg-white'
                   : 'max-w-[1280px] rounded-xl shadow-sm bg-white'

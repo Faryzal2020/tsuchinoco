@@ -40,12 +40,16 @@ export function rawLinesFromSubmission(lines: Record<string, number>, batch: Bat
 export async function importSubmission(subId: string, ctx: ImportContext, by: string): Promise<ImportResult> {
   let createdTid = '';
   let createdOrderId = '';
+  let capturedCode: string | undefined;
+  let previousStatus = 'new';
 
   const res = await runTransaction(db, async (tx) => {
     const subRef = doc(db, COL.submissions, subId);
     const snap = await tx.get(subRef);
     if (!snap.exists()) return 'skipped';
     const sub = { id: snap.id, ...(snap.data() as Omit<Submission, 'id'>) };
+    capturedCode = sub.code;
+    previousStatus = sub.status;
     if (sub.status !== 'new') return 'skipped';
 
     const batch = ctx.batches.find((b) => b.id === sub.batchId);
@@ -88,9 +92,14 @@ export async function importSubmission(subId: string, ctx: ImportContext, by: st
   });
 
   if (res === 'imported' && createdTid) {
-    await logActivity('create', 'order', `Imported customer submission ${subId} into order ${createdTid}`, by, { entityId: createdOrderId, entityName: createdTid });
+    await logActivity('create', 'order', `Imported submission into order ${createdTid}`, by, { entityId: createdOrderId, entityName: createdTid });
   } else if (res === 'rejected') {
-    await logActivity('update', 'submission', `Rejected invalid submission ${subId}`, by, { entityId: subId });
+    const subLabel = capturedCode ? `Submission ${capturedCode}` : undefined;
+    await logActivity('update', 'submission', `Rejected invalid submission${capturedCode ? ` (${capturedCode})` : ''}`, by, {
+      entityId: subId,
+      entityName: subLabel,
+      changes: [{ field: 'status', before: previousStatus, after: 'rejected' }],
+    });
   }
 
   return res;

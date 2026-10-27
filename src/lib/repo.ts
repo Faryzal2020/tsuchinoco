@@ -21,7 +21,7 @@ import { db, storage } from './firebase';
 import { newId } from './keys';
 import { transactionId } from './forms';
 import type {
-  Batch, Counter, Event, FormDoc, FormTemplate, Item, LogAction, LogEntityType, Media, Order, OrderStatus, PublicForm, Settings, Staff, StockMovement, Submission, Wrapup,
+  Batch, Counter, Event, FieldChange, FormDoc, FormTemplate, Item, LogAction, LogEntityType, Media, Order, OrderStatus, PublicForm, Settings, Staff, StockMovement, Submission, Wrapup,
 } from '@/types';
 
 export const COL = {
@@ -58,13 +58,87 @@ export function clean<T>(v: T): T {
   return v;
 }
 
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v) && !(v instanceof Date);
+}
+
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null || a === undefined || b === undefined) return a === b;
+  if (typeof a !== typeof b) return false;
+
+  if (typeof a === 'object') {
+    if (Array.isArray(a) !== Array.isArray(b)) return false;
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) {
+        if (!deepEqual(a[i], b[i])) return false;
+      }
+      return true;
+    }
+    const keysA = Object.keys(a as object);
+    const keysB = Object.keys(b as object);
+    if (keysA.length !== keysB.length) return false;
+    for (const k of keysA) {
+      if (!deepEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  return false;
+}
+
+/** Compute field-level differences between before state and incoming patch data */
+export function buildFieldChanges(
+  before: unknown,
+  patchData: unknown,
+  prefix = ''
+): FieldChange[] {
+  const changes: FieldChange[] = [];
+  if (!patchData || typeof patchData !== 'object') return changes;
+  const pObj = patchData as Record<string, unknown>;
+  const bObj = before && typeof before === 'object' ? (before as Record<string, unknown>) : null;
+
+  const ignoreKeys = new Set(['id', 'updatedAt', 'updatedBy', 'createdAt', 'createdBy']);
+
+  const keysToInspect = prefix && isPlainObject(bObj)
+    ? Array.from(new Set([...Object.keys(bObj), ...Object.keys(pObj)]))
+    : Object.keys(pObj);
+
+  for (const key of keysToInspect) {
+    if (ignoreKeys.has(key)) continue;
+    const afterVal = pObj[key];
+    if (afterVal === undefined && !prefix) continue;
+
+    const fullPath = prefix ? `${prefix}.${key}` : key;
+    const beforeVal = bObj ? bObj[key] : undefined;
+
+    if (isPlainObject(beforeVal) && isPlainObject(afterVal)) {
+      const nested = buildFieldChanges(beforeVal, afterVal, fullPath);
+      changes.push(...nested);
+    } else {
+      if (!deepEqual(beforeVal, afterVal)) {
+        changes.push({
+          field: fullPath,
+          before: beforeVal === undefined ? null : beforeVal,
+          after: afterVal === undefined ? null : afterVal,
+        });
+      }
+    }
+  }
+
+  return changes;
+}
+
 /** Append-only immutable audit log helper */
 export async function logActivity(
   action: LogAction,
   entityType: LogEntityType,
   details: string,
   by: string,
-  extra?: { entityId?: string; entityName?: string }
+  extra?: { entityId?: string; entityName?: string; changes?: FieldChange[] }
 ): Promise<string> {
   const id = newId();
   try {
@@ -74,6 +148,7 @@ export async function logActivity(
       details,
       entityId: extra?.entityId,
       entityName: extra?.entityName,
+      changes: extra?.changes && extra.changes.length > 0 ? extra.changes : undefined,
       createdAt: Date.now(),
       createdBy: by,
     }));
@@ -98,14 +173,38 @@ export const staffRepo = {
     const id = email.trim().toLowerCase();
     const ref = doc(db, COL.staff, id);
     const snap = await getDoc(ref);
-    if (snap.exists()) await updateDoc(ref, { ...data, ...touch(by) });
-    else await setDoc(ref, { email: id, ...data, ...stamp(by) });
-    await logActivity('update', 'staff', `Upserted staff member ${email} (${data.displayName})`, by, { entityId: id, entityName: data.displayName });
+    const before = snap.exists() ? (snap.data() as Staff) : null;
+    if (snap.exists()) {
+      await updateDoc(ref, { ...data, ...touch(by) });
+      const changes = before ? buildFieldChanges(before, data) : [];
+      const fieldNames = changes.length > 0 ? changes.map((c) => c.field).join(', ') : 'details';
+      await logActivity('update', 'staff', `Updated staff member: ${fieldNames}`, by, {
+        entityId: id,
+        entityName: data.displayName,
+        changes,
+      });
+    } else {
+      await setDoc(ref, { email: id, ...data, ...stamp(by) });
+      await logActivity('create', 'staff', `Added staff member "${data.displayName}"`, by, {
+        entityId: id,
+        entityName: data.displayName,
+      });
+    }
     return id;
   },
   patch: async (id: string, data: Partial<Staff>, by: string) => {
+    const ref = doc(db, COL.staff, id);
+    const snap = await getDoc(ref);
+    const before = snap.exists() ? (snap.data() as Staff) : null;
     await patch(COL.staff, id, data, by);
-    await logActivity('update', 'staff', `Updated staff member ${id} access`, by, { entityId: id });
+    const changes = before ? buildFieldChanges(before, data as Record<string, unknown>) : [];
+    const staffName = data.displayName || before?.displayName || before?.email;
+    const fieldNames = changes.length > 0 ? changes.map((c) => c.field).join(', ') : 'access';
+    await logActivity('update', 'staff', `Updated staff member: ${fieldNames}`, by, {
+      entityId: id,
+      entityName: staffName,
+      changes,
+    });
   },
 };
 
@@ -117,13 +216,30 @@ export const itemRepo = {
     return newIdVal;
   },
   patch: async (id: string, data: Partial<Item>, by: string) => {
+    const ref = doc(db, COL.items, id);
+    const snap = await getDoc(ref);
+    const before = snap.exists() ? (snap.data() as Item) : null;
     await patch(COL.items, id, data, by);
-    const fields = Object.keys(data).filter((k) => k !== 'updatedAt' && k !== 'updatedBy').join(', ');
-    await logActivity('update', 'item', `Updated item ${id} (${fields || 'details'})`, by, { entityId: id, entityName: data.name });
+    const changes = before ? buildFieldChanges(before, data as Record<string, unknown>) : [];
+    const itemName = data.name || before?.name;
+    const fieldNames = changes.length > 0
+      ? changes.map((c) => c.field).join(', ')
+      : Object.keys(data).filter((k) => k !== 'updatedAt' && k !== 'updatedBy').join(', ') || 'details';
+    await logActivity('update', 'item', `Updated item: ${fieldNames}`, by, {
+      entityId: id,
+      entityName: itemName,
+      changes,
+    });
   },
   remove: async (id: string, by: string = 'staff') => {
-    await deleteDoc(doc(db, COL.items, id));
-    await logActivity('delete', 'item', `Deleted item ${id}`, by, { entityId: id });
+    const ref = doc(db, COL.items, id);
+    const snap = await getDoc(ref);
+    const itemName = snap.exists() ? (snap.data() as Item).name : undefined;
+    await deleteDoc(ref);
+    await logActivity('delete', 'item', itemName ? `Deleted item "${itemName}"` : 'Deleted item', by, {
+      entityId: id,
+      entityName: itemName,
+    });
   },
   bulkCreate: async (rows: Omit<Item, 'id' | keyof Meta>[], by: string) => {
     const chunks: typeof rows[] = [];
@@ -144,8 +260,8 @@ export const itemRepo = {
       }
       await b.commit();
     }
-    const fields = Object.keys(patchData).join(', ');
-    await logActivity('bulk_update', 'item', `Bulk updated ${ids.length} items (${fields})`, by);
+    const fields = Object.keys(patchData).filter((k) => k !== 'updatedAt' && k !== 'updatedBy').join(', ');
+    await logActivity('bulk_update', 'item', `Bulk updated ${ids.length} items: ${fields}`, by);
   },
   bulkRemove: async (ids: string[], by: string) => {
     for (let i = 0; i < ids.length; i += 400) {
@@ -177,8 +293,20 @@ export const eventRepo = {
     return id;
   },
   patch: async (id: string, data: Partial<Event>, by: string) => {
+    const ref = doc(db, COL.events, id);
+    const snap = await getDoc(ref);
+    const before = snap.exists() ? (snap.data() as Event) : null;
     await patch(COL.events, id, data, by);
-    await logActivity('update', 'event', `Updated event ${id}`, by, { entityId: id, entityName: data.name });
+    const changes = before ? buildFieldChanges(before, data as Record<string, unknown>) : [];
+    const eventName = data.name || before?.name;
+    const fieldNames = changes.length > 0
+      ? changes.map((c) => c.field).join(', ')
+      : Object.keys(data).filter((k) => k !== 'updatedAt' && k !== 'updatedBy').join(', ') || 'details';
+    await logActivity('update', 'event', `Updated event: ${fieldNames}`, by, {
+      entityId: id,
+      entityName: eventName,
+      changes,
+    });
   },
 };
 
@@ -186,20 +314,53 @@ export const eventRepo = {
 export const batchRepo = {
   create: async (data: Omit<Batch, 'id' | keyof Meta>, by: string) => {
     const id = await create<Batch>(COL.batches, data, by);
-    await logActivity('create', 'batch', `Created Batch ${data.number}`, by, { entityId: id });
+    const batchName = data.number !== undefined ? `Batch ${data.number}` : 'Batch';
+    await logActivity('create', 'batch', `Created ${batchName}`, by, { entityId: id, entityName: batchName });
     return id;
   },
   patch: async (id: string, data: Partial<Batch>, by: string) => {
+    const ref = doc(db, COL.batches, id);
+    const snap = await getDoc(ref);
+    const before = snap.exists() ? (snap.data() as Batch) : null;
     await patch(COL.batches, id, data, by);
-    await logActivity('update', 'batch', `Updated batch ${id}`, by, { entityId: id });
+    const changes = before ? buildFieldChanges(before, data as Record<string, unknown>) : [];
+    const batchNumber = before?.number ?? data.number;
+    const batchName = batchNumber !== undefined ? `Batch ${batchNumber}` : 'Batch';
+    const fieldNames = changes.length > 0
+      ? changes.map((c) => c.field).join(', ')
+      : Object.keys(data).filter((k) => k !== 'updatedAt' && k !== 'updatedBy').join(', ') || 'details';
+    await logActivity('update', 'batch', `Updated ${batchName.toLowerCase()}: ${fieldNames}`, by, {
+      entityId: id,
+      entityName: batchName,
+      changes,
+    });
   },
   remove: async (id: string, by: string = 'staff') => {
-    await deleteDoc(doc(db, COL.batches, id));
-    await logActivity('delete', 'batch', `Deleted batch ${id}`, by, { entityId: id });
+    const ref = doc(db, COL.batches, id);
+    const snap = await getDoc(ref);
+    const bNum = snap.exists() ? (snap.data() as Batch).number : undefined;
+    const batchName = bNum !== undefined ? `Batch ${bNum}` : 'Batch';
+    await deleteDoc(ref);
+    await logActivity('delete', 'batch', `Deleted ${batchName.toLowerCase()}`, by, { entityId: id, entityName: batchName });
   },
   setPlanningCell: async (id: string, key: string, field: 'onsiteExtra' | 'ordered' | 'received', value: number, by: string) => {
-    await updateDoc(doc(db, COL.batches, id), new FieldPath('planning', key, field), value, new FieldPath('updatedAt'), Date.now(), new FieldPath('updatedBy'), by);
-    await logActivity('update', 'batch', `Updated batch planning (${key}.${field} = ${value})`, by, { entityId: id });
+    const ref = doc(db, COL.batches, id);
+    const snap = await getDoc(ref);
+    const before = snap.exists() ? (snap.data() as Batch) : null;
+    const beforeVal = before?.planning?.[key]?.[field] ?? 0;
+    await updateDoc(ref, new FieldPath('planning', key, field), value, new FieldPath('updatedAt'), Date.now(), new FieldPath('updatedBy'), by);
+    const batchNumber = before?.number;
+    const batchName = batchNumber !== undefined ? `Batch ${batchNumber}` : 'Batch';
+    const changes: FieldChange[] = [{
+      field: `planning.${key}.${field}`,
+      before: beforeVal,
+      after: value,
+    }];
+    await logActivity('update', 'batch', `Updated batch planning: ${field}`, by, {
+      entityId: id,
+      entityName: batchName,
+      changes,
+    });
   },
 };
 
@@ -222,7 +383,8 @@ export async function allocateTransactionId(tx: Transaction, batch: Batch, event
 export const orderRepo = {
   create: async (data: Omit<Order, 'id' | keyof Meta>, by: string) => {
     const id = await create<Order>(COL.orders, data, by);
-    await logActivity('create', 'order', `Created order ${id} for ${data.customer.name}`, by, { entityId: id });
+    const ordName = `Order for ${data.customer.name}`;
+    await logActivity('create', 'order', `Created order for ${data.customer.name}`, by, { entityId: id, entityName: ordName });
     return id;
   },
   /** Create an order with the next sequential transaction id of its batch. */
@@ -233,12 +395,24 @@ export const orderRepo = {
       tx.set(doc(db, COL.orders, id), clean({ ...data, transactionId: t, ...stamp(by) }));
       return t;
     });
-    await logActivity('create', 'order', `Created manual order ${tid} for ${data.customer.name}`, by, { entityId: id, entityName: tid });
+    await logActivity('create', 'order', `Created manual order for ${data.customer.name}`, by, { entityId: id, entityName: tid });
     return { id, transactionId: tid };
   },
   patch: async (id: string, data: Partial<Order>, by: string) => {
+    const ref = doc(db, COL.orders, id);
+    const snap = await getDoc(ref);
+    const before = snap.exists() ? (snap.data() as Order) : null;
     await patch(COL.orders, id, data, by);
-    await logActivity('update', 'order', `Updated order ${id}`, by, { entityId: id });
+    const changes = before ? buildFieldChanges(before, data as Record<string, unknown>) : [];
+    const ordName = before?.transactionId || (before?.customer ? `Order for ${before.customer.name}` : undefined);
+    const fieldNames = changes.length > 0
+      ? changes.map((c) => c.field).join(', ')
+      : Object.keys(data).filter((k) => k !== 'updatedAt' && k !== 'updatedBy').join(', ') || 'details';
+    await logActivity('update', 'order', `Updated order: ${fieldNames}`, by, {
+      entityId: id,
+      entityName: ordName,
+      changes,
+    });
   },
   setStatus: async (o: Order, status: OrderStatus, by: string, extra: Partial<Order> = {}) => {
     const now = Date.now();
@@ -257,7 +431,17 @@ export const orderRepo = {
       }
     }
     await b.commit();
-    await logActivity('status_change', 'order', `Changed order ${o.transactionId || o.id} status to ${status}`, by, { entityId: o.id, entityName: o.transactionId });
+    const ordName = o.transactionId || (o.customer?.name ? `Order for ${o.customer.name}` : undefined);
+    const changes: FieldChange[] = [{
+      field: 'status',
+      before: o.status,
+      after: status,
+    }];
+    await logActivity('status_change', 'order', `Changed order status: ${o.status} → ${status}`, by, {
+      entityId: o.id,
+      entityName: ordName,
+      changes,
+    });
   },
   bulkSetStatus: async (orders: Order[], status: OrderStatus, by: string) => {
     for (let i = 0; i < orders.length; i += 200) {
@@ -307,22 +491,68 @@ export const wrapupRepo = {
     const ref = doc(db, COL.wrapups, eventId);
     const snap = await getDoc(ref);
     if (!snap.exists()) {
+      const evSnap = await getDoc(doc(db, COL.events, eventId));
+      const evName = evSnap.exists() ? (evSnap.data() as Event).name : undefined;
       const w: Omit<Wrapup, 'id'> = { status: 'draft', rows: {}, bundlesSold: {}, movementIds: [], ...stamp(by) };
       await setDoc(ref, w);
-      await logActivity('create', 'wrapup', `Initiated wrap-up for event ${eventId}`, by, { entityId: eventId });
+      await logActivity('create', 'wrapup', evName ? `Initiated wrap-up for event "${evName}"` : 'Initiated wrap-up', by, {
+        entityId: eventId,
+        entityName: evName,
+      });
     }
   },
   setCell: async (eventId: string, key: string, field: 'brought' | 'leftover', value: number | null, by: string) => {
+    const snap = await getDoc(doc(db, COL.wrapups, eventId));
+    const before = snap.exists() ? (snap.data() as Wrapup) : null;
+    const beforeVal = before?.rows?.[key]?.[field] ?? null;
     await updateDoc(doc(db, COL.wrapups, eventId), new FieldPath('rows', key, field), value, new FieldPath('rows', key, 'editedBy'), by, new FieldPath('updatedAt'), Date.now(), new FieldPath('updatedBy'), by);
-    await logActivity('update', 'wrapup', `Updated wrap-up cell (${key}.${field} = ${value})`, by, { entityId: eventId });
+    const evSnap = await getDoc(doc(db, COL.events, eventId));
+    const evName = evSnap.exists() ? (evSnap.data() as Event).name : undefined;
+    const changes: FieldChange[] = [{
+      field: `rows.${key}.${field}`,
+      before: beforeVal,
+      after: value,
+    }];
+    await logActivity('update', 'wrapup', `Updated wrap-up: ${field}`, by, {
+      entityId: eventId,
+      entityName: evName,
+      changes,
+    });
   },
   setBundleSold: async (eventId: string, bundleId: string, value: number, by: string) => {
+    const snap = await getDoc(doc(db, COL.wrapups, eventId));
+    const before = snap.exists() ? (snap.data() as Wrapup) : null;
+    const beforeVal = before?.bundlesSold?.[bundleId] ?? 0;
     await updateDoc(doc(db, COL.wrapups, eventId), new FieldPath('bundlesSold', bundleId), value, new FieldPath('updatedAt'), Date.now(), new FieldPath('updatedBy'), by);
-    await logActivity('update', 'wrapup', `Updated wrap-up bundle sold count (${bundleId} = ${value})`, by, { entityId: eventId });
+    const evSnap = await getDoc(doc(db, COL.events, eventId));
+    const evName = evSnap.exists() ? (evSnap.data() as Event).name : undefined;
+    const changes: FieldChange[] = [{
+      field: `bundlesSold.${bundleId}`,
+      before: beforeVal,
+      after: value,
+    }];
+    await logActivity('update', 'wrapup', `Updated wrap-up: bundles sold`, by, {
+      entityId: eventId,
+      entityName: evName,
+      changes,
+    });
   },
   patch: async (eventId: string, data: Partial<Wrapup>, by: string) => {
+    const ref = doc(db, COL.wrapups, eventId);
+    const snap = await getDoc(ref);
+    const before = snap.exists() ? (snap.data() as Wrapup) : null;
     await patch(COL.wrapups, eventId, data, by);
-    await logActivity('update', 'wrapup', `Updated wrap-up status / details for event ${eventId}`, by, { entityId: eventId });
+    const evSnap = await getDoc(doc(db, COL.events, eventId));
+    const evName = evSnap.exists() ? (evSnap.data() as Event).name : undefined;
+    const changes = before ? buildFieldChanges(before, data as Record<string, unknown>) : [];
+    const fieldNames = changes.length > 0
+      ? changes.map((c) => c.field).join(', ')
+      : Object.keys(data).filter((k) => k !== 'updatedAt' && k !== 'updatedBy').join(', ') || 'status';
+    await logActivity('update', 'wrapup', `Updated wrap-up: ${fieldNames}`, by, {
+      entityId: eventId,
+      entityName: evName,
+      changes,
+    });
   },
 };
 
@@ -350,19 +580,41 @@ export const formRepo = {
   /** The form id is the batch id, which is what ties a form to exactly one batch. */
   create: async (batchId: string, data: Omit<FormDoc, 'id' | keyof Meta>, by: string) => {
     await setDoc(doc(db, COL.forms, batchId), clean({ ...data, ...stamp(by) }));
-    await logActivity('create', 'form', `Created preorder form for batch ${batchId}`, by, { entityId: batchId });
+    const formTitle = data.title || 'Preorder form';
+    await logActivity('create', 'form', `Created preorder form`, by, {
+      entityId: batchId,
+      entityName: formTitle,
+    });
     return batchId;
   },
   patch: async (id: string, data: Partial<FormDoc>, by: string) => {
+    const ref = doc(db, COL.forms, id);
+    const snap = await getDoc(ref);
+    const before = snap.exists() ? (snap.data() as FormDoc) : null;
     await patch(COL.forms, id, data, by);
-    await logActivity('update', 'form', `Updated form configuration ${id}`, by, { entityId: id });
+    const changes = before ? buildFieldChanges(before, data as Record<string, unknown>) : [];
+    const formTitle = data.title || before?.title;
+    const fieldNames = changes.length > 0
+      ? changes.map((c) => c.field).join(', ')
+      : Object.keys(data).filter((k) => k !== 'updatedAt' && k !== 'updatedBy').join(', ') || 'configuration';
+    await logActivity('update', 'form', `Updated form: ${fieldNames}`, by, {
+      entityId: id,
+      entityName: formTitle,
+      changes,
+    });
   },
   remove: async (id: string, by: string = 'staff') => {
+    const ref = doc(db, COL.forms, id);
+    const snap = await getDoc(ref);
+    const formTitle = snap.exists() ? (snap.data() as FormDoc).title : undefined;
     const b = writeBatch(db);
-    b.delete(doc(db, COL.forms, id));
+    b.delete(ref);
     b.delete(doc(db, COL.publicForms, id));
     await b.commit();
-    await logActivity('delete', 'form', `Removed form and public snapshot ${id}`, by, { entityId: id });
+    await logActivity('delete', 'form', formTitle ? `Removed form "${formTitle}"` : 'Removed form', by, {
+      entityId: id,
+      entityName: formTitle,
+    });
   },
   /** Write the public snapshot and stamp the form as published. */
   publish: async (formId: string, pf: Omit<PublicForm, 'id'>, hash: string, by: string) => {
@@ -370,35 +622,78 @@ export const formRepo = {
     b.set(doc(db, COL.publicForms, formId), clean(pf));
     b.update(doc(db, COL.forms, formId), { publishedAt: pf.publishedAt, publishedHash: hash, enabled: pf.enabled, ...touch(by) });
     await b.commit();
-    await logActivity('publish', 'form', `Published public form snapshot v${pf.version}`, by, { entityId: formId, entityName: pf.title });
+    await logActivity('publish', 'form', `Published public form snapshot v${pf.version}`, by, {
+      entityId: formId,
+      entityName: pf.title,
+    });
   },
   /** Flip accepting on the form and, when it has been published, on the public snapshot too. */
   setEnabled: async (formId: string, enabled: boolean, published: boolean, by: string) => {
+    const ref = doc(db, COL.forms, formId);
+    const snap = await getDoc(ref);
+    const before = snap.exists() ? (snap.data() as FormDoc) : null;
     const b = writeBatch(db);
-    b.update(doc(db, COL.forms, formId), { enabled, ...touch(by) });
+    b.update(ref, { enabled, ...touch(by) });
     if (published) b.update(doc(db, COL.publicForms, formId), { enabled });
     await b.commit();
-    await logActivity('update', 'form', `${enabled ? 'Enabled (opened)' : 'Disabled (paused)'} preorder form`, by, { entityId: formId });
+    const formTitle = before?.title;
+    const changes: FieldChange[] = [{
+      field: 'enabled',
+      before: before?.enabled ?? !enabled,
+      after: enabled,
+    }];
+    await logActivity('update', 'form', `${enabled ? 'Enabled (opened)' : 'Disabled (paused)'} preorder form`, by, {
+      entityId: formId,
+      entityName: formTitle,
+      changes,
+    });
   },
 };
 
 // ---- Submissions (staff side) ----
 export const submissionRepo = {
   patch: async (id: string, data: Partial<Submission>, by: string = 'staff') => {
-    await updateDoc(doc(db, COL.submissions, id), clean(data));
-    await logActivity('update', 'submission', `Updated submission ${id} (status: ${data.status || 'modified'})`, by, { entityId: id });
+    const ref = doc(db, COL.submissions, id);
+    const snap = await getDoc(ref);
+    const before = snap.exists() ? (snap.data() as Submission) : null;
+    await updateDoc(ref, clean(data));
+    const changes = before ? buildFieldChanges(before, data as Record<string, unknown>) : [];
+    const subCode = before?.code;
+    const fieldNames = changes.length > 0
+      ? changes.map((c) => c.field).join(', ')
+      : Object.keys(data).filter((k) => k !== 'updatedAt' && k !== 'updatedBy').join(', ') || 'status';
+    await logActivity('update', 'submission', `Updated submission: ${fieldNames}`, by, {
+      entityId: id,
+      entityName: subCode ? `Submission ${subCode}` : undefined,
+      changes,
+    });
   },
   remove: async (id: string, by: string = 'staff') => {
-    await deleteDoc(doc(db, COL.submissions, id));
-    await logActivity('delete', 'submission', `Removed submission ${id}`, by, { entityId: id });
+    const ref = doc(db, COL.submissions, id);
+    const snap = await getDoc(ref);
+    const subCode = snap.exists() ? (snap.data() as Submission).code : undefined;
+    await deleteDoc(ref);
+    await logActivity('delete', 'submission', subCode ? `Removed submission ${subCode}` : 'Removed submission', by, {
+      entityId: id,
+      entityName: subCode ? `Submission ${subCode}` : undefined,
+    });
   },
 };
 
 // ---- Settings ----
 export const settingsRepo = {
   save: async (data: Settings, by: string) => {
-    await setDoc(doc(db, COL.settings, 'global'), { ...data, ...touch(by) }, { merge: true });
-    await logActivity('update', 'settings', `Updated global circle settings (Currency: ${data.currency}, Deadline: ${data.pickupDeadlineDays}d)`, by);
+    const ref = doc(db, COL.settings, 'global');
+    const snap = await getDoc(ref);
+    const before = snap.exists() ? (snap.data() as Settings) : null;
+    await setDoc(ref, { ...data, ...touch(by) }, { merge: true });
+    const changes = before ? buildFieldChanges(before, data as unknown as Record<string, unknown>) : [];
+    const fieldNames = changes.length > 0
+      ? changes.map((c) => c.field).join(', ')
+      : 'general';
+    await logActivity('update', 'settings', `Updated global circle settings: ${fieldNames}`, by, {
+      changes,
+    });
   },
 };
 
@@ -409,7 +704,22 @@ export const templateRepo = {
     await setDoc(doc(db, COL.templates, id), clean({ ...data, ...stamp(by) }));
     return id;
   },
-  patch: (id: string, data: Partial<FormTemplate>, by: string) => patch(COL.templates, id, data, by),
+  patch: async (id: string, data: Partial<FormTemplate>, by: string) => {
+    const ref = doc(db, COL.templates, id);
+    const snap = await getDoc(ref);
+    const before = snap.exists() ? (snap.data() as FormTemplate) : null;
+    await patch(COL.templates, id, data, by);
+    const changes = before ? buildFieldChanges(before, data as Record<string, unknown>) : [];
+    const tName = data.name || before?.name;
+    const fieldNames = changes.length > 0
+      ? changes.map((c) => c.field).join(', ')
+      : 'template';
+    await logActivity('update', 'form', `Updated form template: ${fieldNames}`, by, {
+      entityId: id,
+      entityName: tName,
+      changes,
+    });
+  },
   remove: (id: string) => deleteDoc(doc(db, COL.templates, id)),
   setDefault: async (id: string, by: string) => {
     const b = writeBatch(db);

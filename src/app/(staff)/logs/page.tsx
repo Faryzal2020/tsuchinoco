@@ -51,6 +51,77 @@ function EntityBadge({ entityType }: { entityType: LogEntityType }) {
   );
 }
 
+function DiffValue({ value }: { value: unknown }) {
+  if (value === null || value === undefined) {
+    return <span className="italic text-ink-3 text-xs">(none)</span>;
+  }
+
+  if (typeof value === 'boolean') {
+    return (
+      <span
+        className={`inline-flex px-1.5 py-0.5 rounded text-[11px] mono font-semibold ${
+          value
+            ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+            : 'bg-red-100 text-red-800 border border-red-200'
+        }`}
+      >
+        {String(value)}
+      </span>
+    );
+  }
+
+  if (typeof value === 'number') {
+    return <span className="mono text-xs font-semibold">{value.toLocaleString()}</span>;
+  }
+
+  if (typeof value === 'string') {
+    if (value.trim() === '') {
+      return <span className="italic text-ink-3 text-xs">(empty)</span>;
+    }
+    // Check if it's a hex color
+    if (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(value)) {
+      return (
+        <span className="inline-flex items-center gap-1.5 mono text-xs">
+          <span
+            className="w-3.5 h-3.5 rounded border border-line shadow-2xs inline-block shrink-0"
+            style={{ backgroundColor: value }}
+          />
+          <span className="font-semibold">{value}</span>
+        </span>
+      );
+    }
+    return <span className="mono text-xs whitespace-pre-wrap">{value}</span>;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return <span className="italic text-ink-3 text-xs">[ ] (empty)</span>;
+    }
+    return (
+      <div className="space-y-1">
+        <span className="text-[10px] text-ink-2 font-medium">({value.length} items)</span>
+        <pre className="mono text-[11px] bg-white/80 p-1.5 rounded border border-line/60 max-h-[140px] overflow-auto whitespace-pre-wrap">
+          {JSON.stringify(value, null, 2)}
+        </pre>
+      </div>
+    );
+  }
+
+  if (typeof value === 'object') {
+    const keys = Object.keys(value as object);
+    if (keys.length === 0) {
+      return <span className="italic text-ink-3 text-xs">{'{ }'} (empty)</span>;
+    }
+    return (
+      <pre className="mono text-[11px] bg-white/80 p-1.5 rounded border border-line/60 max-h-[140px] overflow-auto whitespace-pre-wrap">
+        {JSON.stringify(value, null, 2)}
+      </pre>
+    );
+  }
+
+  return <span className="mono text-xs">{String(value)}</span>;
+}
+
 function LogsContent() {
   const { staff, staffName } = useData();
   const { get, set } = useQuery();
@@ -154,9 +225,6 @@ function LogsContent() {
       >
         <div className="flex items-center gap-2 flex-wrap">
           <span>Immutable audit record of all data changes and administrative operations.</span>
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
-            🔒 Tamper-Proof & Immutable
-          </span>
         </div>
       </PageHeader>
 
@@ -361,21 +429,53 @@ function LogsContent() {
             <div className="p-3 rounded-lg border border-line bg-white space-y-1">
               <span className="text-xs text-ink-2 block">Activity Summary</span>
               <p className="text-sm font-medium text-ink">{inspectLog.details}</p>
+              {inspectLog.entityName && (
+                <div className="text-xs text-ink-2 mt-1">
+                  Target: <strong className="font-semibold text-ink">{inspectLog.entityName}</strong>
+                </div>
+              )}
             </div>
 
-            {(inspectLog.entityId || inspectLog.entityName) && (
-              <div className="p-3 rounded-lg border border-line bg-white space-y-1">
-                <span className="text-xs text-ink-2 block">Entity Reference</span>
-                {inspectLog.entityName && (
-                  <p className="text-xs">
-                    Name: <strong className="font-semibold">{inspectLog.entityName}</strong>
-                  </p>
-                )}
-                {inspectLog.entityId && (
-                  <p className="text-xs mono text-ink-2">
-                    ID: <code>{inspectLog.entityId}</code>
-                  </p>
-                )}
+            {/* Changed Fields (Before & After) for Updates */}
+            {inspectLog.changes && inspectLog.changes.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-ink uppercase tracking-wide">
+                    Changed Fields ({inspectLog.changes.length})
+                  </span>
+                </div>
+                <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
+                  {inspectLog.changes.map((change, idx) => (
+                    <div
+                      key={idx}
+                      className="p-3 rounded-lg border border-line bg-white shadow-xs space-y-2"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="mono text-xs font-bold text-ink px-2 py-0.5 rounded bg-cream-2 border border-line">
+                          {change.field}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                        <div className="p-2.5 rounded-lg border border-red-200/80 bg-red-50/60 space-y-1">
+                          <span className="text-[11px] font-semibold text-red-700 flex items-center gap-1">
+                            <span>−</span> Before
+                          </span>
+                          <div className="text-ink break-words">
+                            <DiffValue value={change.before} />
+                          </div>
+                        </div>
+                        <div className="p-2.5 rounded-lg border border-emerald-200/80 bg-emerald-50/60 space-y-1">
+                          <span className="text-[11px] font-semibold text-emerald-700 flex items-center gap-1">
+                            <span>+</span> After
+                          </span>
+                          <div className="text-ink break-words">
+                            <DiffValue value={change.after} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
