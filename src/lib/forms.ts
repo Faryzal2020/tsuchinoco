@@ -50,7 +50,7 @@ export type FormLabelKey = keyof typeof DEFAULT_FORM_LABELS;
 export const labelOf = (labels: Record<string, string> | undefined, k: FormLabelKey): string => labels?.[k] || DEFAULT_FORM_LABELS[k];
 
 export const DEFAULT_THEME: FormTheme = {
-  background: '#FBF8EE', surface: '#FFFFFF', accent: '#2A5BD7', text: '#26241F', font: 'sans', width: 'normal', radius: 'soft',
+  background: '#FBF8EE', surface: '#FFFFFF', accent: '#2A5BD7', text: '#26241F', font: 'sans', width: 'widescreen', radius: 'soft',
 };
 
 export interface ThemePreset {
@@ -65,36 +65,12 @@ export const THEME_PRESETS: ThemePreset[] = [
     id: 'cream',
     name: 'Warm Cream',
     description: 'Classic circle default with warm editorial feel',
-    theme: { background: '#FBF8EE', surface: '#FFFFFF', accent: '#2A5BD7', text: '#26241F', font: 'sans', width: 'normal', radius: 'soft' },
-  },
-  {
-    id: 'cyber',
-    name: 'Midnight Cyber',
-    description: 'Sleek dark mode with electric indigo accents',
-    theme: { background: '#0F1117', surface: '#1E2230', accent: '#6366F1', text: '#F3F4F6', font: 'sans', width: 'normal', radius: 'soft' },
-  },
-  {
-    id: 'sakura',
-    name: 'Pastel Sakura',
-    description: 'Soft manga aesthetic with rose pink accents',
-    theme: { background: '#FFF5F7', surface: '#FFFFFF', accent: '#EC4899', text: '#374151', font: 'rounded', width: 'normal', radius: 'round' },
-  },
-  {
-    id: 'studio',
-    name: 'Clean Studio',
-    description: 'Minimalist high-contrast monochrome design',
-    theme: { background: '#F9FAFB', surface: '#FFFFFF', accent: '#111827', text: '#1F2937', font: 'sans', width: 'normal', radius: 'sharp' },
-  },
-  {
-    id: 'matcha',
-    name: 'Matcha Botanical',
-    description: 'Earthy relaxed tones with rounded styling',
-    theme: { background: '#F4F7F4', surface: '#FFFFFF', accent: '#059669', text: '#1C2E24', font: 'rounded', width: 'normal', radius: 'soft' },
+    theme: { background: '#FBF8EE', surface: '#FFFFFF', accent: '#2A5BD7', text: '#26241F', font: 'sans', width: 'widescreen', radius: 'soft' },
   },
 ];
 
 export const BLOCK_NAMES: Record<FormBlockType, string> = {
-  header: 'Header', text: 'Text', image: 'Image', divider: 'Divider', section: 'Section title',
+  header: 'Header', logo: 'Logo', text: 'Text', image: 'Image', divider: 'Divider', section: 'Section title',
   products: 'Products', payment_instructions: 'Payment & QRIS', customer: 'Customer details', fulfilment: 'Pickup or mail', notes: 'Notes', submit: 'Submit button',
 };
 
@@ -142,11 +118,12 @@ export function newBlock(type: FormBlockType): FormBlock {
   const id = newId(6);
   switch (type) {
     case 'header': return { id, type, title: 'Title', subtitle: '' };
+    case 'logo': return { id, type, imageId: '', background: 'transparent', align: 'center', marginLeft: 0, marginRight: 0, size: 'md' };
     case 'text': return { id, type, text: '' };
     case 'image': return { id, type, imageId: '', size: 'full' };
     case 'divider': return { id, type };
     case 'section': return { id, type, title: 'Section' };
-    case 'products': return { id, type, source: { kind: 'all' }, layout: 'list', showThumbnails: true, showPrices: true };
+    case 'products': return { id, type, source: { kind: 'all' }, layout: 'grid', columns: 3, showThumbnails: true, showPrices: true };
     case 'payment_instructions': return { id, type, title: 'Payment details (Cara Pembayaran)', text: 'Scan QRIS below or transfer to circle bank account.', imageId: '' };
     case 'customer': return { id, type };
     case 'fulfilment': return { id, type };
@@ -170,8 +147,8 @@ export function defaultBlocks(batch: Batch, event: Event, items: Map<string, Ite
     if (item.kind === 'bundle') { bundles = true; continue; }
     if (!types.includes(item.type)) types.push(item.type);
   }
-  for (const t of types) blocks.push({ id: newId(6), type: 'products', title: titleCase(t), source: { kind: 'type', type: t }, layout: 'list', showThumbnails: true, showPrices: true });
-  if (bundles) blocks.push({ id: newId(6), type: 'products', title: 'Bundles', source: { kind: 'bundles' }, layout: 'list', showThumbnails: true, showPrices: true });
+  for (const t of types) blocks.push({ id: newId(6), type: 'products', title: titleCase(t), source: { kind: 'type', type: t }, layout: 'grid', columns: 3, showThumbnails: true, showPrices: true });
+  if (bundles) blocks.push({ id: newId(6), type: 'products', title: 'Bundles', source: { kind: 'bundles' }, layout: 'grid', columns: 3, showThumbnails: true, showPrices: true });
   blocks.push({ id: newId(6), type: 'notes' });
   blocks.push({ id: newId(6), type: 'submit' });
   return blocks;
@@ -199,7 +176,41 @@ export function resolveSource(source: ProductsSource, batch: Batch, items: Map<s
     case 'bundles': return offered.filter((e) => items.get(e.itemId)!.kind === 'bundle');
     case 'type': return offered.filter((e) => { const i = items.get(e.itemId)!; return i.kind === 'product' && i.type === source.type; });
     case 'entries': { const want = new Set(source.keys); return offered.filter((e) => want.has(offeringKey(e))); }
+    case 'search': {
+      const q = (source.query || '').trim().toLowerCase();
+      if (!q) return [];
+      const words = q.split(/\s+/).filter(Boolean);
+      return offered.filter((e) => {
+        const item = items.get(e.itemId);
+        if (!item) return false;
+        const v = item.kind === 'product' ? variantOf(item, e.variantId) : undefined;
+        const haystack = `${item.name} ${item.type || ''} ${v?.name || ''} ${v?.sku || ''}`.toLowerCase();
+        return words.every((w) => haystack.includes(w));
+      });
+    }
   }
+}
+
+/** Converts any products source filter into hand-picked entries, excluding the specified item keys. */
+export function convertSourceToEntriesWithoutItem(
+  source: ProductsSource,
+  batch: Batch,
+  items: Map<string, Item>,
+  keysToRemove: string[],
+): ProductsSource {
+  const removeSet = new Set(keysToRemove);
+  if (source.kind === 'entries') {
+    return {
+      kind: 'entries',
+      keys: source.keys.filter((k) => !removeSet.has(k)),
+    };
+  }
+  const currentEntries = resolveSource(source, batch, items);
+  const nextKeys = currentEntries.map(offeringKey).filter((k) => !removeSet.has(k));
+  return {
+    kind: 'entries',
+    keys: nextKeys,
+  };
 }
 
 export function entryPrice(e: OfferingEntry, item: Item): number {
@@ -251,6 +262,10 @@ export function buildPublicForm(form: FormDoc, batch: Batch, event: Event, items
       const m = b.imageId ? media.get(b.imageId) : undefined;
       const src = m?.url || m?.dataUrl;
       if (src) blocks.push({ ...b, src });
+    } else if (b.type === 'logo') {
+      const m = b.imageId ? media.get(b.imageId) : undefined;
+      const src = m?.url || m?.dataUrl;
+      blocks.push({ ...b, src });
     } else if (b.type === 'payment_instructions') {
       const m = b.imageId ? media.get(b.imageId) : undefined;
       const src = m?.url || m?.dataUrl;
@@ -306,6 +321,7 @@ export function formMediaIds(form: FormDoc, batch: Batch, items: Map<string, Ite
   const ids: string[] = [];
   for (const b of form.blocks) {
     if (b.type === 'header' && b.imageId) ids.push(b.imageId);
+    if (b.type === 'logo' && b.imageId) ids.push(b.imageId);
     if (b.type === 'image' && b.imageId) ids.push(b.imageId);
     if (b.type === 'payment_instructions' && b.imageId) ids.push(b.imageId);
   }

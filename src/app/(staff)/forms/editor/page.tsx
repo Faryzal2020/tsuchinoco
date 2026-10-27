@@ -12,12 +12,17 @@ import { cloneFormFromBatch, applyTemplateToForm, saveFormAsTemplate } from '@/l
 import {
   BLOCK_NAMES,
   THEME_PRESETS,
+  type ThemePreset,
   newBlock,
   pickupDaysFor,
   publicFormSize,
   PUBLIC_FORM_LIMIT,
   formUrl,
+  convertSourceToEntriesWithoutItem,
+  resolveSource,
+  offeringKey,
 } from '@/lib/forms';
+import { useMedia } from '@/lib/media';
 import ThumbnailInput from '@/components/form/ThumbnailInput';
 import FormRenderer from '@/components/form/FormRenderer';
 import Button from '@/components/ui/Button';
@@ -55,7 +60,10 @@ import {
   Settings as SettingsIcon,
   Smartphone,
   Trash2,
+  XCircle,
 } from 'lucide-react';
+
+const KEY_THEME_PRESETS = 'tsu.customThemePresets';
 
 type StudioTab = 'blocks' | 'theme' | 'settings' | 'templates';
 
@@ -79,6 +87,59 @@ function FormStudio() {
   const [blockToDelete, setBlockToDelete] = useState<string | null>(null);
   const [snap, setSnap] = useState<Omit<PublicForm, 'id'> | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [customPresets, setCustomPresets] = useState<ThemePreset[]>([]);
+  const [presetName, setPresetName] = useState('');
+
+  // Load custom presets from localStorage
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(KEY_THEME_PRESETS);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          setCustomPresets(parsed);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const saveCustomPresets = (next: ThemePreset[]) => {
+    setCustomPresets(next);
+    try {
+      localStorage.setItem(KEY_THEME_PRESETS, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const handleSavePreset = () => {
+    if (!draft) return;
+    const name = presetName.trim() || `Custom Preset ${customPresets.length + 1}`;
+    const fontLabel = draft.theme.font === 'serif' ? 'Serif' : draft.theme.font === 'rounded' ? 'Rounded' : 'Sans';
+    const radiusLabel = draft.theme.radius === 'sharp' ? 'Sharp' : draft.theme.radius === 'round' ? 'Round' : 'Soft';
+    const widthLabel = draft.theme.width === 'narrow' ? 'Narrow' : draft.theme.width === 'wide' ? 'Wide' : 'Normal';
+    const description = `${fontLabel} · ${radiusLabel} · ${widthLabel}`;
+
+    const newPreset: ThemePreset = {
+      id: `custom_${Date.now()}`,
+      name,
+      description,
+      theme: { ...draft.theme },
+    };
+
+    saveCustomPresets([...customPresets, newPreset]);
+    setPresetName('');
+    toast(`Saved theme preset: "${name}"`);
+  };
+
+  const handleDeletePreset = (presetId: string, name: string) => {
+    saveCustomPresets(customPresets.filter((p) => p.id !== presetId));
+    toast(`Deleted preset: "${name}"`);
+  };
+
+  const allPresets = useMemo(() => [...THEME_PRESETS, ...customPresets], [customPresets]);
 
   // Initialize draft when form loads
   useEffect(() => {
@@ -147,6 +208,32 @@ function FormStudio() {
     setDraft({
       ...draft,
       blocks: draft.blocks.map((b) => (b.id === blockId ? ({ ...b, ...patch } as FormBlock) : b)),
+    });
+  };
+
+  const handleRemoveProductFromBlock = (blockId: string, keysToRemove: string[]) => {
+    if (!draft || !batch) return;
+    const targetBlock = draft.blocks.find((b) => b.id === blockId);
+    if (!targetBlock || targetBlock.type !== 'products') return;
+
+    const nextSource = convertSourceToEntriesWithoutItem(
+      targetBlock.source,
+      batch,
+      itemsById,
+      keysToRemove,
+    );
+
+    const nextBlocks = draft.blocks.map((b) => {
+      if (b.id !== blockId || b.type !== 'products') return b;
+      return {
+        ...b,
+        source: nextSource,
+      };
+    });
+
+    setDraft({
+      ...draft,
+      blocks: nextBlocks,
     });
   };
 
@@ -303,7 +390,14 @@ function FormStudio() {
                           </Pill>
                           <span className="text-xs font-medium text-ink truncate">
                             {b.type === 'header' && (b.title || 'Header')}
-                            {b.type === 'products' && (b.title || `${b.source.kind} products`)}
+                            {b.type === 'logo' && 'Logo'}
+                            {b.type === 'products' &&
+                              (b.title ||
+                                (b.source.kind === 'type'
+                                  ? `Category: ${b.source.type || 'All'}`
+                                  : b.source.kind === 'search'
+                                  ? `Search: "${b.source.query || ''}"`
+                                  : `${b.source.kind} products`))}
                             {b.type === 'payment_instructions' && (b.title || 'Payment & QRIS')}
                             {b.type === 'text' && (b.text?.slice(0, 30) || 'Text block')}
                             {b.type === 'section' && (b.title || 'Section')}
@@ -360,6 +454,7 @@ function FormStudio() {
                             batch={batch}
                             itemsById={itemsById}
                             onChange={(patch) => updateBlock(b.id, patch)}
+                            onRemoveProduct={handleRemoveProductFromBlock}
                           />
                         </div>
                       )}
@@ -377,96 +472,150 @@ function FormStudio() {
                 <h2 className="text-sm font-bold text-ink">Theme Presets</h2>
                 <p className="text-xs text-ink-2 mb-3">1-click designer color palettes crafted for artist circle forms.</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {THEME_PRESETS.map((p) => {
-                    const active = draft.theme.background === p.theme.background && draft.theme.accent === p.theme.accent;
+                  {allPresets.map((p) => {
+                    const isCustom = p.id !== 'cream';
+                    const active =
+                      draft.theme.background === p.theme.background &&
+                      draft.theme.surface === p.theme.surface &&
+                      draft.theme.accent === p.theme.accent &&
+                      draft.theme.text === p.theme.text &&
+                      draft.theme.font === p.theme.font &&
+                      draft.theme.radius === p.theme.radius &&
+                      draft.theme.width === p.theme.width;
                     return (
-                      <button
+                      <div
                         key={p.id}
-                        type="button"
+                        role="button"
+                        tabIndex={0}
                         onClick={() => setDraft({ ...draft, theme: { ...p.theme } })}
-                        className={`text-left p-2.5 rounded-lg border transition-all ${
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setDraft({ ...draft, theme: { ...p.theme } });
+                          }
+                        }}
+                        className={`group text-left p-2.5 rounded-lg border transition-all cursor-pointer relative ${
                           active ? 'border-accent ring-1 ring-accent bg-accent/5' : 'border-line hover:border-line-strong'
                         }`}
                       >
                         <div className="flex items-center gap-2 mb-1.5">
-                          <div className="flex -space-x-1">
+                          <div className="flex -space-x-1 shrink-0">
                             <span className="w-4 h-4 rounded-full border border-black/10" style={{ background: p.theme.background }} />
                             <span className="w-4 h-4 rounded-full border border-black/10" style={{ background: p.theme.surface }} />
                             <span className="w-4 h-4 rounded-full border border-black/10" style={{ background: p.theme.accent }} />
                           </div>
-                          <span className="text-xs font-bold text-ink">{p.name}</span>
-                          {active && <Check size={12} className="ml-auto text-accent" />}
+                          <span className="text-xs font-bold text-ink truncate flex-1">{p.name}</span>
+                          {active && <Check size={12} className="text-accent shrink-0" />}
+                          {isCustom && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeletePreset(p.id, p.name);
+                              }}
+                              className="opacity-0 group-hover:opacity-100 p-0.5 text-ink-2 hover:text-red-500 rounded transition-opacity shrink-0"
+                              title="Delete preset"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          )}
                         </div>
                         <p className="text-[11px] text-ink-2 line-clamp-1">{p.description}</p>
-                      </button>
+                      </div>
                     );
                   })}
+                  <button
+                    type="button"
+                    onClick={handleSavePreset}
+                    aria-label="Save current theme as new preset"
+                    title="Save current theme as new preset"
+                    className="flex items-center justify-center p-2.5 min-h-[58px] rounded-lg border-2 border-dashed border-line hover:border-accent hover:bg-accent/5 text-ink-2 hover:text-accent transition-all cursor-pointer"
+                  >
+                    <Plus size={20} />
+                  </button>
                 </div>
               </div>
 
-              <div className="border-t border-line pt-4 space-y-3">
-                <h3 className="text-xs font-bold uppercase text-ink-2 tracking-wider">Custom Colors</h3>
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <Field label="Background color">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="color"
-                        value={draft.theme.background}
-                        onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, background: e.target.value } })}
-                        className="w-8 h-8 rounded-md cursor-pointer border border-line"
-                      />
-                      <Input
-                        small
-                        value={draft.theme.background}
-                        onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, background: e.target.value } })}
-                      />
-                    </div>
-                  </Field>
-                  <Field label="Card surface">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="color"
-                        value={draft.theme.surface}
-                        onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, surface: e.target.value } })}
-                        className="w-8 h-8 rounded-md cursor-pointer border border-line"
-                      />
-                      <Input
-                        small
-                        value={draft.theme.surface}
-                        onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, surface: e.target.value } })}
-                      />
-                    </div>
-                  </Field>
-                  <Field label="Accent color">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="color"
-                        value={draft.theme.accent}
-                        onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, accent: e.target.value } })}
-                        className="w-8 h-8 rounded-md cursor-pointer border border-line"
-                      />
-                      <Input
-                        small
-                        value={draft.theme.accent}
-                        onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, accent: e.target.value } })}
-                      />
-                    </div>
-                  </Field>
-                  <Field label="Text color">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="color"
-                        value={draft.theme.text}
-                        onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, text: e.target.value } })}
-                        className="w-8 h-8 rounded-md cursor-pointer border border-line"
-                      />
-                      <Input
-                        small
-                        value={draft.theme.text}
-                        onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, text: e.target.value } })}
-                      />
-                    </div>
-                  </Field>
+              <div className="border-t border-line pt-4 space-y-4">
+                <Field label="Preset name" hint="Give your preset a name before clicking '+'">
+                  <Input
+                    small
+                    placeholder="Enter preset name (e.g. Midnight Cyber)…"
+                    value={presetName}
+                    onChange={(e) => setPresetName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleSavePreset();
+                      }
+                    }}
+                  />
+                </Field>
+
+                <div>
+                  <h3 className="text-xs font-bold uppercase text-ink-2 tracking-wider mb-3">Custom Colors</h3>
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <Field label="Background color">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={draft.theme.background}
+                          onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, background: e.target.value } })}
+                          className="w-8 h-8 rounded-md cursor-pointer border border-line"
+                        />
+                        <Input
+                          small
+                          value={draft.theme.background}
+                          onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, background: e.target.value } })}
+                        />
+                      </div>
+                    </Field>
+                    <Field label="Card surface">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={draft.theme.surface}
+                          onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, surface: e.target.value } })}
+                          className="w-8 h-8 rounded-md cursor-pointer border border-line"
+                        />
+                        <Input
+                          small
+                          value={draft.theme.surface}
+                          onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, surface: e.target.value } })}
+                        />
+                      </div>
+                    </Field>
+                    <Field label="Accent color">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={draft.theme.accent}
+                          onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, accent: e.target.value } })}
+                          className="w-8 h-8 rounded-md cursor-pointer border border-line"
+                        />
+                        <Input
+                          small
+                          value={draft.theme.accent}
+                          onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, accent: e.target.value } })}
+                        />
+                      </div>
+                    </Field>
+                    <Field label="Text color">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={draft.theme.text}
+                          onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, text: e.target.value } })}
+                          className="w-8 h-8 rounded-md cursor-pointer border border-line"
+                        />
+                        <Input
+                          small
+                          value={draft.theme.text}
+                          onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, text: e.target.value } })}
+                        />
+                      </div>
+                    </Field>
+                  </div>
                 </div>
               </div>
 
@@ -504,6 +653,7 @@ function FormStudio() {
                       <option value="narrow">Narrow (520px)</option>
                       <option value="normal">Normal (680px)</option>
                       <option value="wide">Wide (860px)</option>
+                      <option value="widescreen">Widescreen (1240px)</option>
                     </Select>
                   </Field>
                 </div>
@@ -659,7 +809,7 @@ function FormStudio() {
         </div>
 
         {/* ================= Right Column: Live Reactive Preview ================= */}
-        <div className="sticky top-4 space-y-3">
+        <div className="sticky top-16 space-y-3">
           {/* Preview Toolbar */}
           <div className="bg-white border border-line rounded-lg px-4 py-2 shadow-xs flex items-center justify-between text-xs">
             <div className="flex items-center gap-2">
@@ -694,16 +844,23 @@ function FormStudio() {
           </div>
 
           {/* Preview Canvas Window */}
-          <div className="flex justify-center bg-zinc-100 rounded-xl p-4 border border-line overflow-x-auto min-h-[500px]">
+          <div className="flex justify-center bg-zinc-100 rounded-xl p-4 border border-line h-[calc(100vh-210px)] min-h-[500px] overscroll-contain overflow-hidden">
             <div
-              className={`transition-all duration-300 w-full ${
-                viewport === 'mobile' ? 'max-w-[400px] shadow-xl rounded-2xl border-4 border-zinc-700 bg-white overflow-hidden' : 'max-w-[860px]'
+              className={`transition-all duration-300 w-full h-full max-h-full min-h-0 overflow-y-auto overscroll-contain ${
+                viewport === 'mobile'
+                  ? 'max-w-[400px] shadow-xl rounded-2xl border-4 border-zinc-700 bg-white'
+                  : 'max-w-[1280px] rounded-xl shadow-sm bg-white'
               }`}
             >
               {!snap ? (
                 <Loading label="Rendering preview…" />
               ) : (
-                <FormRenderer key={JSON.stringify(snap.blocks) + JSON.stringify(snap.theme)} form={snap} preview />
+                <FormRenderer
+                  key={JSON.stringify(snap.blocks) + JSON.stringify(snap.theme)}
+                  form={snap}
+                  preview
+                  onRemoveProduct={handleRemoveProductFromBlock}
+                />
               )}
             </div>
           </div>
@@ -716,6 +873,7 @@ function FormStudio() {
           {(
             [
               { type: 'header', title: 'Header Banner', desc: 'Title, subtitle & top image' },
+              { type: 'logo', title: 'Logo', desc: 'Circle or brand logo with positioning' },
               { type: 'products', title: 'Product Catalog', desc: 'Merch grid or item list' },
               { type: 'payment_instructions', title: 'Payment & QRIS', desc: 'Bank info & QRIS scan code' },
               { type: 'text', title: 'Text Note', desc: 'Announcements, booth rules, FAQs' },
@@ -758,17 +916,102 @@ function FormStudio() {
 
 // ---- Subcomponents ----
 
+/** Debounced search input that fires 1 second after keyboard input stops */
+function SearchSourceField({
+  query,
+  onChangeQuery,
+}: {
+  query: string;
+  onChangeQuery: (q: string) => void;
+}) {
+  const [val, setVal] = useState(query);
+  const [isTyping, setIsTyping] = useState(false);
+  const timerRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    setVal(query);
+  }, [query]);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  const handleChange = (newVal: string) => {
+    setVal(newVal);
+    setIsTyping(true);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      setIsTyping(false);
+      onChangeQuery(newVal);
+    }, 1000);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (timerRef.current) clearTimeout(timerRef.current);
+      setIsTyping(false);
+      onChangeQuery(val);
+    }
+  };
+
+  return (
+    <Field
+      label="Search query"
+      hint="Refreshes 1s after keyboard input stops. Matches product name, variant, or category."
+    >
+      <div className="relative">
+        <Input
+          small
+          placeholder="e.g. Acrylic Standee, Keychain, Ver 2…"
+          value={val}
+          onChange={(e) => handleChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+        />
+        {isTyping && (
+          <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-amber-600 font-medium animate-pulse flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
+            Updating in 1s…
+          </span>
+        )}
+      </div>
+    </Field>
+  );
+}
+
+function ItemSquareThumbnail({ thumbnailId }: { thumbnailId?: string }) {
+  const media = useMedia(thumbnailId);
+  const src = media?.url || media?.dataUrl;
+  if (!src) {
+    return (
+      <div className="w-12 h-12 rounded bg-zinc-100 flex items-center justify-center text-[9px] text-zinc-400 border border-zinc-200">
+        No img
+      </div>
+    );
+  }
+  return (
+    <div className="w-12 h-12 rounded bg-zinc-100 overflow-hidden border border-zinc-200">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={src} alt="" className="w-full h-full object-cover" />
+    </div>
+  );
+}
+
 /** Inline editor for individual block types */
 function BlockConfigEditor({
   block: b,
   batch,
   itemsById,
   onChange,
+  onRemoveProduct,
 }: {
   block: FormBlock;
   batch: Batch;
   itemsById: Map<string, Item>;
   onChange: (patch: Partial<FormBlock>) => void;
+  onRemoveProduct?: (blockId: string, keys: string[]) => void;
 }) {
   switch (b.type) {
     case 'header':
@@ -791,6 +1034,106 @@ function BlockConfigEditor({
         </div>
       );
 
+    case 'logo':
+      return (
+        <div className="space-y-3 text-xs">
+          <Field label="Logo image">
+            <ThumbnailInput
+              value={b.imageId}
+              kind="image"
+              onChange={(imageId) => onChange({ imageId: imageId || '' })}
+              title="Upload Logo"
+            />
+          </Field>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Background">
+              <div className="flex bg-zinc-100 p-0.5 rounded-lg border border-line">
+                <button
+                  type="button"
+                  onClick={() => onChange({ background: 'transparent' })}
+                  className={`flex-1 py-1.5 text-center rounded-md font-semibold transition-all cursor-pointer ${
+                    b.background === 'transparent'
+                      ? 'bg-white shadow-xs text-accent font-bold'
+                      : 'text-ink-2 hover:text-ink'
+                  }`}
+                >
+                  Transparent
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onChange({ background: 'visible' })}
+                  className={`flex-1 py-1.5 text-center rounded-md font-semibold transition-all cursor-pointer ${
+                    b.background === 'visible'
+                      ? 'bg-white shadow-xs text-accent font-bold'
+                      : 'text-ink-2 hover:text-ink'
+                  }`}
+                >
+                  Visible card
+                </button>
+              </div>
+            </Field>
+
+            <Field label="Logo size">
+              <Select
+                small
+                value={b.size || 'md'}
+                onChange={(e) => onChange({ size: e.target.value as 'sm' | 'md' | 'lg' })}
+              >
+                <option value="sm">Small (60px)</option>
+                <option value="md">Medium (90px)</option>
+                <option value="lg">Large (140px)</option>
+              </Select>
+            </Field>
+          </div>
+
+          <Field label="Alignment">
+            <div className="flex bg-zinc-100 p-0.5 rounded-lg border border-line">
+              {(['left', 'center', 'right'] as const).map((align) => {
+                const active = (b.align || 'center') === align;
+                return (
+                  <button
+                    key={align}
+                    type="button"
+                    onClick={() => onChange({ align })}
+                    className={`flex-1 py-1.5 text-center rounded-md capitalize font-semibold transition-all cursor-pointer ${
+                      active
+                        ? 'bg-white shadow-xs text-accent font-bold'
+                        : 'text-ink-2 hover:text-ink'
+                    }`}
+                  >
+                    {align}
+                  </button>
+                );
+              })}
+            </div>
+          </Field>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Margin left (px)">
+              <Input
+                small
+                type="number"
+                min={0}
+                max={300}
+                value={b.marginLeft ?? 0}
+                onChange={(e) => onChange({ marginLeft: Math.max(0, Number(e.target.value) || 0) })}
+              />
+            </Field>
+            <Field label="Margin right (px)">
+              <Input
+                small
+                type="number"
+                min={0}
+                max={300}
+                value={b.marginRight ?? 0}
+                onChange={(e) => onChange({ marginRight: Math.max(0, Number(e.target.value) || 0) })}
+              />
+            </Field>
+          </div>
+        </div>
+      );
+
     case 'products': {
       const offeredCategories: string[] = Array.from(
         new Set(
@@ -800,43 +1143,34 @@ function BlockConfigEditor({
         ),
       );
 
+      const resolvedEntries = resolveSource(b.source, batch, itemsById);
+
       return (
         <div className="space-y-3 text-xs">
           <Field label="Block section title (optional)">
             <Input small value={b.title ?? ''} placeholder="e.g. Acrylic Standees" onChange={(e) => onChange({ title: e.target.value })} />
           </Field>
 
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Source filter">
-              <Select
-                small
-                value={b.source.kind}
-                onChange={(e) => {
-                  const kind = e.target.value as ProductsSource['kind'];
-                  if (kind === 'all') onChange({ source: { kind: 'all' } });
-                  else if (kind === 'bundles') onChange({ source: { kind: 'bundles' } });
-                  else if (kind === 'type') onChange({ source: { kind: 'type', type: offeredCategories[0] || '' } });
-                  else if (kind === 'entries') onChange({ source: { kind: 'entries', keys: [] } });
-                }}
-              >
-                <option value="all">All offered products</option>
-                <option value="type">By item type / category</option>
-                <option value="bundles">Bundles only</option>
-                <option value="entries">Hand-picked specific items</option>
-              </Select>
-            </Field>
-
-            <Field label="Display layout">
-              <Select
-                small
-                value={b.layout}
-                onChange={(e) => onChange({ layout: e.target.value as 'list' | 'grid' })}
-              >
-                <option value="list">List (rows)</option>
-                <option value="grid">Grid (2-column cards)</option>
-              </Select>
-            </Field>
-          </div>
+          <Field label="Source filter">
+            <Select
+              small
+              value={b.source.kind}
+              onChange={(e) => {
+                const kind = e.target.value as ProductsSource['kind'];
+                if (kind === 'all') onChange({ source: { kind: 'all' } });
+                else if (kind === 'bundles') onChange({ source: { kind: 'bundles' } });
+                else if (kind === 'type') onChange({ source: { kind: 'type', type: offeredCategories[0] || '' } });
+                else if (kind === 'search') onChange({ source: { kind: 'search', query: '' } });
+                else if (kind === 'entries') onChange({ source: { kind: 'entries', keys: [] } });
+              }}
+            >
+              <option value="all">All offered products</option>
+              <option value="type">By item type / category</option>
+              <option value="search">Search / keyword filter</option>
+              <option value="bundles">Bundles only</option>
+              <option value="entries">Hand-picked specific items</option>
+            </Select>
+          </Field>
 
           {b.source.kind === 'type' && (
             <Field label="Select category">
@@ -854,6 +1188,13 @@ function BlockConfigEditor({
             </Field>
           )}
 
+          {b.source.kind === 'search' && (
+            <SearchSourceField
+              query={b.source.query}
+              onChangeQuery={(q) => onChange({ source: { kind: 'search', query: q } })}
+            />
+          )}
+
           {b.source.kind === 'entries' && (
             <div className="border border-line rounded-lg p-2 max-h-36 overflow-y-auto space-y-1">
               <span className="font-semibold block mb-1">Pick items to include in this block:</span>
@@ -861,7 +1202,7 @@ function BlockConfigEditor({
                 const item = itemsById.get(e.itemId);
                 if (!item) return null;
                 const v = e.variantId ? item.variants?.find((v: Variant) => v.id === e.variantId) : undefined;
-                const key = e.variantId ? `${e.itemId}:${e.variantId}` : e.itemId;
+                const key = offeringKey(e);
                 const checked = (b.source as { keys: string[] }).keys.includes(key);
 
                 return (
@@ -879,6 +1220,105 @@ function BlockConfigEditor({
               })}
             </div>
           )}
+
+          {/* Included Items Preview Grid with ⓧ Circle delete button */}
+          <div className="space-y-1.5 pt-1">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-ink text-[11px]">
+                Items shown in this block ({resolvedEntries.length}):
+              </span>
+              {resolvedEntries.length > 0 && (
+                <span className="text-[10px] text-zinc-400">
+                  Click ⓧ to exclude an item
+                </span>
+              )}
+            </div>
+
+            {resolvedEntries.length === 0 ? (
+              <div className="p-3 text-center text-ink-2 bg-cream/40 rounded-lg border border-line border-dashed text-xs">
+                {b.source.kind === 'search' && !b.source.query
+                  ? 'Type keywords above to search for items.'
+                  : 'No items match this filter in the current batch offering.'}
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 p-2 bg-cream/40 rounded-lg border border-line max-h-52 overflow-y-auto">
+                {resolvedEntries.map((e) => {
+                  const item = itemsById.get(e.itemId);
+                  if (!item) return null;
+                  const v = e.variantId ? item.variants?.find((v: Variant) => v.id === e.variantId) : undefined;
+                  const key = offeringKey(e);
+                  const mId = v?.thumbnailId || item.thumbnailId;
+
+                  return (
+                    <div
+                      key={key}
+                      className="relative flex flex-col items-center p-1.5 bg-white border border-line rounded-lg text-center shadow-2xs group hover:border-accent/40 transition-all"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onRemoveProduct?.(b.id, [key])}
+                        className="absolute top-1 right-1 p-0.5 rounded-full text-zinc-400 hover:text-red-600 bg-white/95 hover:bg-white border border-zinc-200 hover:border-red-300 shadow-xs transition-all hover:scale-110 z-10 cursor-pointer"
+                        title="Exclude this item (converts block to hand-picked items)"
+                        aria-label={`Exclude ${item.name}`}
+                      >
+                        <XCircle size={15} />
+                      </button>
+                      <ItemSquareThumbnail thumbnailId={mId} />
+                      <span className="text-[10px] font-semibold text-ink line-clamp-1 w-full mt-1" title={item.name}>
+                        {item.name}
+                      </span>
+                      {v?.name && (
+                        <span className="text-[9px] text-ink-2 line-clamp-1 w-full" title={v.name}>
+                          {v.name}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <Field label="Columns per row" hint="Choose 1 to 5 columns on desktop (defaults to 3, adapts on mobile)">
+            <div className="grid grid-cols-5 gap-1.5 p-1 bg-cream/60 rounded-lg border border-line">
+              {([1, 2, 3, 4, 5] as const).map((cols) => {
+                const currentCols = b.columns ?? (b.layout === 'list' ? 1 : 3);
+                const active = currentCols === cols;
+                return (
+                  <button
+                    key={cols}
+                    type="button"
+                    onClick={() =>
+                      onChange({
+                        columns: cols,
+                        layout: cols === 1 ? 'list' : 'grid',
+                      })
+                    }
+                    className={`flex flex-col items-center justify-center py-2 px-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+                      active
+                        ? 'bg-white shadow-xs text-accent font-bold border border-accent/40 ring-1 ring-accent/20'
+                        : 'text-ink-2 hover:text-ink hover:bg-white/60'
+                    }`}
+                  >
+                    {/* Visual mini-column wireframe */}
+                    <div className="flex gap-0.5 items-center justify-center w-full h-3 mb-1 px-0.5">
+                      {Array.from({ length: cols }).map((_, i) => (
+                        <span
+                          key={i}
+                          className={`h-full rounded-[1px] flex-1 ${
+                            active ? 'bg-accent' : 'bg-zinc-300'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                    <span className="text-[11px] leading-tight">
+                      {cols} {cols === 1 ? 'Col' : 'Cols'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </Field>
 
           <div className="flex gap-4 pt-1">
             <Checkbox

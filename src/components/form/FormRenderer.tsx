@@ -7,6 +7,7 @@ import React, { useMemo, useState } from 'react';
 import type { Fulfilment, PublicBlock, PublicForm, PublicProductGroup, Submission } from '@/types';
 import { confirmationCode, labelOf, type FormLabelKey } from '@/lib/forms';
 import { formatMoney } from '@/lib/format';
+import { XCircle } from 'lucide-react';
 
 type Snapshot = Omit<PublicForm, 'id'>;
 export type SubmissionDraft = Omit<Submission, 'id'>;
@@ -16,13 +17,13 @@ const FONTS = {
   serif: 'Georgia, "Times New Roman", serif',
   rounded: 'ui-rounded, "Hiragino Maru Gothic ProN", Quicksand, "Segoe UI", sans-serif',
 };
-const WIDTHS = { narrow: '520px', normal: '680px', wide: '860px' };
+const WIDTHS = { narrow: '520px', normal: '680px', wide: '860px', widescreen: '1240px' };
 const RADII = { sharp: '4px', soft: '12px', round: '20px' };
 
 export function themeStyle(theme: Snapshot['theme']): React.CSSProperties {
   return {
     '--pf-bg': theme.background, '--pf-surface': theme.surface, '--pf-accent': theme.accent, '--pf-text': theme.text,
-    '--pf-font': FONTS[theme.font] ?? FONTS.sans, '--pf-width': WIDTHS[theme.width] ?? WIDTHS.normal, '--pf-radius': RADII[theme.radius] ?? RADII.soft,
+    '--pf-font': FONTS[theme.font] ?? FONTS.sans, '--pf-width': WIDTHS[theme.width] ?? WIDTHS.widescreen, '--pf-radius': RADII[theme.radius] ?? RADII.soft,
   } as React.CSSProperties;
 }
 
@@ -31,13 +32,14 @@ interface Props {
   /** Preview inside the staff app: nothing is sent, the closed state is ignored. */
   preview?: boolean;
   onSubmit?: (draft: SubmissionDraft, proofFile?: File) => Promise<void>;
+  onRemoveProduct?: (blockId: string, keys: string[]) => void;
 }
 
 interface Errors { name?: string; email?: string; phone?: string; pickupDay?: string; address?: string; lines?: string; submit?: string }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export default function FormRenderer({ form, preview, onSubmit }: Props) {
+export default function FormRenderer({ form, preview, onSubmit, onRemoveProduct }: Props) {
   const L = (k: FormLabelKey) => labelOf(form.labels, k);
   const hasFulfilment = form.mode !== 'post' && form.blocks.some((b) => b.type === 'fulfilment');
   const [qty, setQty] = useState<Record<string, number>>({});
@@ -137,10 +139,11 @@ export default function FormRenderer({ form, preview, onSubmit }: Props) {
               {form.blocks.map((b) => {
                 if (b.type === 'header') return null;
                 return (
-                  <Block key={b.id} block={b} L={L} form={form} qty={qty} setQ={setQ} max={max} c={c} setC={setC} errors={errors}
+                  <Block key={b.id} block={b} preview={preview} L={L} form={form} qty={qty} setQ={setQ} max={max} c={c} setC={setC} errors={errors}
                     fulfilment={effectiveFulfilment} setFulfilment={setFulfilment} pickupDay={pickupDay} setPickupDay={setPickupDay}
                     proofFile={proofFile} setProofFile={setProofFile}
-                    chosen={chosen} total={total} sending={phase === 'sending'} />
+                    chosen={chosen} total={total} sending={phase === 'sending'}
+                    onRemoveProduct={onRemoveProduct} />
                 );
               })}
               {!form.blocks.some((b) => b.type === 'submit') && (
@@ -194,6 +197,8 @@ interface BlockProps {
   chosen: { key: string; qty: number; item: Snapshot['items'][string] }[];
   total: number;
   sending: boolean;
+  preview?: boolean;
+  onRemoveProduct?: (blockId: string, keys: string[]) => void;
 }
 
 function Block(p: BlockProps) {
@@ -207,15 +212,77 @@ function Block(p: BlockProps) {
       return <h2 className="pf-section">{b.title}{b.description && <small>{b.description}</small>}</h2>;
     case 'image':
       return b.src ? <div className={`pf-image ${b.size === 'half' ? 'half' : ''}`}><img src={b.src} alt={b.caption ?? ''} />{b.caption && <div className="pf-caption">{b.caption}</div>}</div> : null;
-    case 'products':
+    case 'logo': {
+      if (!b.src) {
+        if (!p.preview) return null;
+        return (
+          <div
+            className={b.background === 'visible' ? 'pf-card' : ''}
+            style={{
+              display: 'flex',
+              justifyContent: b.align === 'left' ? 'flex-start' : b.align === 'right' ? 'flex-end' : 'center',
+              padding: b.background === 'visible' ? undefined : '12px 0',
+            }}
+          >
+            <div
+              className="text-xs text-ink-2 italic p-3 border border-dashed border-line rounded-lg text-center"
+              style={{
+                marginLeft: b.marginLeft ? `${b.marginLeft}px` : undefined,
+                marginRight: b.marginRight ? `${b.marginRight}px` : undefined,
+              }}
+            >
+              No logo uploaded yet
+            </div>
+          </div>
+        );
+      }
+      const card = b.background === 'visible';
+      const maxHeight = b.size === 'sm' ? 60 : b.size === 'lg' ? 140 : 90;
+      return (
+        <div
+          className={card ? 'pf-card pf-logo' : 'pf-logo'}
+          style={{
+            display: 'flex',
+            justifyContent: b.align === 'left' ? 'flex-start' : b.align === 'right' ? 'flex-end' : 'center',
+            padding: card ? undefined : '4px 0',
+          }}
+        >
+          <img
+            src={b.src}
+            alt="Logo"
+            style={{
+              maxHeight: `${maxHeight}px`,
+              maxWidth: '100%',
+              objectFit: 'contain',
+              marginLeft: b.marginLeft ? `${b.marginLeft}px` : undefined,
+              marginRight: b.marginRight ? `${b.marginRight}px` : undefined,
+            }}
+          />
+        </div>
+      );
+    }
+    case 'products': {
+      const cols = b.columns ?? (b.layout === 'list' ? 1 : 3);
+      const isGrid = cols > 1;
       return (
         <div>
           {b.title && <h2 className="pf-section" style={{ marginBottom: 8 }}>{b.title}</h2>}
-          <div className={`pf-products ${b.layout === 'grid' ? 'grid' : ''}`}>
-            {(b.groups ?? []).map((g) => <ProductCard key={g.itemId} group={g} showThumb={b.showThumbnails} showPrice={b.showPrices} {...p} />)}
+          <div className={`pf-products ${isGrid ? `grid pf-cols-${cols}` : 'pf-cols-1'}`}>
+            {(b.groups ?? []).map((g) => (
+              <ProductCard
+                key={g.itemId}
+                group={g}
+                showThumb={b.showThumbnails}
+                showPrice={b.showPrices}
+                blockId={b.id}
+                onRemoveProduct={p.onRemoveProduct}
+                {...p}
+              />
+            ))}
           </div>
         </div>
       );
+    }
     case 'customer':
       return (
         <div className="pf-card pf-grid">
@@ -499,13 +566,45 @@ function Field({ label, required, hint, error, children }: { label: string; requ
   );
 }
 
-function ProductCard({ group: g, showThumb, showPrice, form, qty, setQ, max, L }: { group: PublicProductGroup; showThumb: boolean; showPrice: boolean } & Pick<BlockProps, 'form' | 'qty' | 'setQ' | 'max' | 'L'>) {
+function ProductCard({
+  group: g,
+  showThumb,
+  showPrice,
+  form,
+  qty,
+  setQ,
+  max,
+  L,
+  blockId,
+  onRemoveProduct,
+}: {
+  group: PublicProductGroup;
+  showThumb: boolean;
+  showPrice: boolean;
+  blockId?: string;
+  onRemoveProduct?: (blockId: string, keys: string[]) => void;
+} & Pick<BlockProps, 'form' | 'qty' | 'setQ' | 'max' | 'L'>) {
   const single = g.products.length === 1 && !g.products[0].variantName;
   const prices = new Set(g.products.map((p) => p.price));
   const samePrice = prices.size === 1;
   const anyOn = g.products.some((p) => (qty[p.key] ?? 0) > 0);
   return (
-    <div className="pf-product" style={anyOn ? { borderColor: 'var(--pf-accent)' } : undefined}>
+    <div className="pf-product" style={{ position: 'relative', ...(anyOn ? { borderColor: 'var(--pf-accent)' } : {}) }}>
+      {onRemoveProduct && blockId && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            onRemoveProduct(blockId, g.products.map((p) => p.key));
+          }}
+          className="pf-item-delete-btn"
+          title="Exclude this item (converts block to hand-picked items)"
+          aria-label={`Remove ${g.name}`}
+        >
+          <XCircle size={18} />
+        </button>
+      )}
       {showThumb && (g.thumb ? <img className="pf-thumb" src={g.thumb} alt="" /> : <div className="pf-thumb" aria-hidden="true" />)}
       <div style={{ minWidth: 0 }}>
         <div className="pf-row" style={{ paddingTop: 0 }}>
@@ -522,7 +621,24 @@ function ProductCard({ group: g, showThumb, showPrice, form, qty, setQ, max, L }
               <span>{p.variantName || g.name}</span>
               {showPrice && !samePrice && <small>{formatMoney(p.price, form.currency)}</small>}
             </div>
-            <Stepper value={qty[p.key] ?? 0} max={max} onChange={(v) => setQ(p.key, v)} label={`${L('quantity')} ${p.variantName}`} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Stepper value={qty[p.key] ?? 0} max={max} onChange={(v) => setQ(p.key, v)} label={`${L('quantity')} ${p.variantName}`} />
+              {onRemoveProduct && blockId && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    onRemoveProduct(blockId, [p.key]);
+                  }}
+                  className="pf-variant-delete-btn"
+                  title={`Exclude variant "${p.variantName}"`}
+                  aria-label={`Remove ${p.variantName}`}
+                >
+                  <XCircle size={14} />
+                </button>
+              )}
+            </div>
           </div>
         ))}
       </div>

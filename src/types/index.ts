@@ -259,7 +259,7 @@ export interface FormTheme {
   accent: string;
   text: string;
   font: 'sans' | 'serif' | 'rounded';
-  width: 'narrow' | 'normal' | 'wide';
+  width: 'narrow' | 'normal' | 'wide' | 'widescreen';
   radius: 'sharp' | 'soft' | 'round';
 }
 
@@ -267,15 +267,17 @@ export type ProductsSource =
   | { kind: 'type'; type: string }
   | { kind: 'bundles' }
   | { kind: 'all' }
-  | { kind: 'entries'; keys: string[] };
+  | { kind: 'entries'; keys: string[] }
+  | { kind: 'search'; query: string };
 
 export type FormBlock =
   | { id: string; type: 'header'; title: string; subtitle?: string; imageId?: string }
+  | { id: string; type: 'logo'; imageId?: string; background: 'visible' | 'transparent'; align: 'left' | 'center' | 'right'; marginLeft?: number; marginRight?: number; size?: 'sm' | 'md' | 'lg' }
   | { id: string; type: 'text'; text: string }
   | { id: string; type: 'image'; imageId: string; caption?: string; size: 'full' | 'half' }
   | { id: string; type: 'divider' }
   | { id: string; type: 'section'; title: string; description?: string }
-  | { id: string; type: 'products'; title?: string; source: ProductsSource; layout: 'list' | 'grid'; showThumbnails: boolean; showPrices: boolean }
+  | { id: string; type: 'products'; title?: string; source: ProductsSource; layout: 'list' | 'grid'; columns?: 1 | 2 | 3 | 4 | 5; showThumbnails: boolean; showPrices: boolean }
   | { id: string; type: 'payment_instructions'; title?: string; text?: string; imageId?: string }
   | { id: string; type: 'customer' }
   | { id: string; type: 'fulfilment' }
