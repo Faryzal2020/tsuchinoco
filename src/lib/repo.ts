@@ -16,11 +16,12 @@ import {
   type Transaction,
   type WithFieldValue,
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { deleteObject, ref } from 'firebase/storage';
+import { db, storage } from './firebase';
 import { newId } from './keys';
 import { transactionId } from './forms';
 import type {
-  Batch, Counter, Event, FormDoc, Item, Media, Order, OrderStatus, PublicForm, Settings, Staff, StockMovement, Submission, Wrapup,
+  Batch, Counter, Event, FormDoc, FormTemplate, Item, Media, Order, OrderStatus, PublicForm, Settings, Staff, StockMovement, Submission, Wrapup,
 } from '@/types';
 
 export const COL = {
@@ -225,10 +226,19 @@ export const wrapupRepo = {
 export const mediaRepo = {
   create: async (data: Omit<Media, 'id' | 'createdAt' | 'createdBy'>, by: string): Promise<string> => {
     const id = newId();
-    await setDoc(doc(db, COL.media, id), { ...data, createdAt: Date.now(), createdBy: by });
+    await setDoc(doc(db, COL.media, id), clean({ ...data, createdAt: Date.now(), createdBy: by }));
     return id;
   },
-  remove: (id: string) => deleteDoc(doc(db, COL.media, id)),
+  createWithId: async (media: Media): Promise<string> => {
+    await setDoc(doc(db, COL.media, media.id), clean(media));
+    return media.id;
+  },
+  remove: async (id: string, storagePath?: string) => {
+    if (storagePath) {
+      deleteObject(ref(storage, storagePath)).catch(() => undefined);
+    }
+    return deleteDoc(doc(db, COL.media, id));
+  },
 };
 
 // ---- Forms ----
@@ -270,4 +280,23 @@ export const submissionRepo = {
 // ---- Settings ----
 export const settingsRepo = {
   save: (data: Settings, by: string) => setDoc(doc(db, COL.settings, 'global'), { ...data, ...touch(by) }, { merge: true }),
+};
+
+// ---- Form Templates ----
+export const templateRepo = {
+  create: async (data: Omit<FormTemplate, 'id' | keyof Meta>, by: string): Promise<string> => {
+    const id = newId();
+    await setDoc(doc(db, COL.templates, id), clean({ ...data, ...stamp(by) }));
+    return id;
+  },
+  patch: (id: string, data: Partial<FormTemplate>, by: string) => patch(COL.templates, id, data, by),
+  remove: (id: string) => deleteDoc(doc(db, COL.templates, id)),
+  setDefault: async (id: string, by: string) => {
+    const b = writeBatch(db);
+    const snap = await getDocs(collection(db, COL.templates));
+    snap.forEach((d) => {
+      b.update(d.ref, { isDefault: d.id === id, ...touch(by) });
+    });
+    await b.commit();
+  },
 };

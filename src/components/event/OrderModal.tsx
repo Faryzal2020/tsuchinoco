@@ -67,6 +67,21 @@ export default function OrderModal({ order: o, event, onClose }: { order: Order 
           <Kv k="Submitted" v={formatDateTime(o.submittedAt)} />
           {o.pickupDay && <Kv k="Pickup day" v={o.pickupDay} />}
           <Kv k="Total" v={formatMoney(o.total, settings.currency)} />
+          {o.paymentProofUrl && (
+            <Kv
+              k="Payment proof"
+              v={
+                <a
+                  href={o.paymentProofUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 font-medium text-accent hover:underline text-xs"
+                >
+                  View receipt ↗
+                </a>
+              }
+            />
+          )}
           {o.collectedAt && <Kv k="Collected" v={formatDateTime(o.collectedAt)} />}
           {o.shippedAt && <Kv k="Shipped" v={formatDateTime(o.shippedAt)} />}
           {o.cancelledAt && <Kv k="Cancelled" v={formatDateTime(o.cancelledAt)} />}

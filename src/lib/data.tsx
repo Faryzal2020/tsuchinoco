@@ -8,7 +8,7 @@ import { collection, doc, onSnapshot, query, where, type DocumentData, type Quer
 import { db } from './firebase';
 import { COL } from './repo';
 import { useAuth } from './auth';
-import type { Batch, Event, FormDoc, Item, Order, PublicForm, Settings, Staff, StockMovement, Submission, Wrapup } from '@/types';
+import type { Batch, Event, FormDoc, FormTemplate, Item, Order, PublicForm, Settings, Staff, StockMovement, Submission, Wrapup } from '@/types';
 import { DEFAULT_SETTINGS, OPEN_ORDER_STATUSES } from '@/types';
 
 interface Data {
@@ -27,6 +27,8 @@ interface Data {
   publicFormsById: Map<string, PublicForm>;
   /** Submissions that are not yet orders: status new or rejected. */
   submissions: Submission[];
+  templates: FormTemplate[];
+  templatesById: Map<string, FormTemplate>;
   settings: Settings;
   staffName: (id: string) => string;
 }
@@ -50,6 +52,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [forms, setForms] = useState<FormDoc[]>([]);
   const [publicForms, setPublicForms] = useState<PublicForm[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [templates, setTemplates] = useState<FormTemplate[]>([]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [loadedCount, setLoadedCount] = useState(0);
 
@@ -68,6 +71,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       onSnapshot(collection(db, COL.forms), (s) => { setForms(rowsOf<FormDoc>(s)); bump(); }, log('forms')),
       onSnapshot(collection(db, COL.publicForms), (s) => { setPublicForms(rowsOf<PublicForm>(s)); bump(); }, log('publicForms')),
       onSnapshot(query(collection(db, COL.submissions), where('status', 'in', ['new', 'rejected'])), (s) => { setSubmissions(rowsOf<Submission>(s)); bump(); }, log('submissions')),
+      onSnapshot(collection(db, COL.templates), (s) => { setTemplates(rowsOf<FormTemplate>(s)); bump(); }, log('templates')),
       onSnapshot(doc(db, COL.settings, 'global'), (s) => { setSettings(s.exists() ? { ...DEFAULT_SETTINGS, ...(s.data() as Partial<Settings>) } : DEFAULT_SETTINGS); bump(); }, log('settings')),
     ];
     return () => { unsubs.forEach((u) => u()); setLoadedCount(0); };
@@ -77,7 +81,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     const itemsById = new Map(items.map((i) => [i.id, i]));
     const staffById = new Map(staff.map((s) => [s.id, s]));
     return {
-      loaded: loadedCount >= 11,
+      loaded: loadedCount >= 12,
       staff: [...staff].sort((a, b) => a.displayName.localeCompare(b.displayName)),
       items: [...items].sort((a, b) => a.name.localeCompare(b.name)),
       itemsById,
@@ -91,10 +95,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       publicForms,
       publicFormsById: new Map(publicForms.map((f) => [f.id, f])),
       submissions: [...submissions].sort((a, b) => a.submittedAt - b.submittedAt),
+      templates: [...templates].sort((a, b) => (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0) || a.name.localeCompare(b.name)),
+      templatesById: new Map(templates.map((t) => [t.id, t])),
       settings,
       staffName: (id: string) => staffById.get(id)?.displayName || id,
     };
-  }, [staff, items, events, batches, openOrders, movements, wrapups, forms, publicForms, submissions, settings, loadedCount]);
+  }, [staff, items, events, batches, openOrders, movements, wrapups, forms, publicForms, submissions, templates, settings, loadedCount]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

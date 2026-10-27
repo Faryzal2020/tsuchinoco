@@ -37,7 +37,7 @@ service cloud.firestore {
     function validSubmission() {
       let d = request.resource.data;
       let p = pub();
-      return d.keys().hasOnly(['formId', 'eventId', 'batchId', 'version', 'code', 'customer', 'fulfilment', 'pickupDay', 'notes', 'lines', 'submittedAt', 'status'])
+      return d.keys().hasOnly(['formId', 'eventId', 'batchId', 'version', 'code', 'customer', 'fulfilment', 'pickupDay', 'paymentProofUrl', 'notes', 'lines', 'submittedAt', 'status'])
         && d.keys().hasAll(['formId', 'eventId', 'batchId', 'version', 'code', 'customer', 'fulfilment', 'notes', 'lines', 'submittedAt', 'status'])
         && str(d.formId, 40) && p.data.enabled == true
         && d.eventId == p.data.eventId && d.batchId == p.data.batchId
@@ -46,6 +46,7 @@ service cloud.firestore {
         && validCustomer(d.customer)
         && d.fulfilment in ['pickup', 'mail']
         && (!('pickupDay' in d) || str(d.pickupDay, 80))
+        && (!('paymentProofUrl' in d) || str(d.paymentProofUrl, 1000))
         && str(d.notes, 1000)
         && d.lines is map && d.lines.size() >= 1 && d.lines.size() <= 60
         && d.lines.keys().hasOnly(p.data.items.keys())

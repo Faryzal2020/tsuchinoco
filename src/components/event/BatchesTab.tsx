@@ -139,7 +139,8 @@ function BatchCard({ event, batch: b, batches, orderCount }: { event: TabProps['
               <Button size="sm" variant="primary" disabled={offeringCount === 0} busy={busy === 'create'} title={offeringCount === 0 ? 'Pick the offering first' : undefined} onClick={() => act('create', () => createFormForBatch(b, event, itemsById, me), 'Form created. Publish it when the offering is final.')}>Create form</Button>
             )}
             {form && (
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" href={`/forms/editor/?id=${form.id}`}>Edit layout</Button>
                 <Button size="sm" href={`/forms/preview/?id=${form.id}`}>Preview</Button>
                 <Button size="sm" variant={pub && !changed ? 'neutral' : 'primary'} busy={busy === 'publish'} onClick={() => act('publish', () => publishForm(form, b, event, itemsById, settings, pub, me), pub ? 'Republished' : 'Published')}>{pub ? 'Republish' : 'Publish'}</Button>
               </div>

@@ -64,6 +64,7 @@ export async function importSubmission(subId: string, ctx: ImportContext, by: st
     const order: Omit<Order, 'id'> = {
       eventId: batch.eventId, batchId: batch.id, source: 'web', externalId: sub.id, transactionId: tid,
       pickupDay: fulfilment === 'pickup' ? sub.pickupDay : undefined,
+      paymentProofUrl: sub.paymentProofUrl,
       submittedAt: Number(sub.submittedAt) || now,
       customer: {
         name: (sub.customer?.name ?? '').trim() || 'Unknown',

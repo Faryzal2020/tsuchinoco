@@ -24,6 +24,11 @@ export const DEFAULT_FORM_LABELS = {
   addressHint: 'Street, subdistrict (kecamatan), city, province, postal code',
   notes: 'Notes',
   notesPlaceholder: 'Anything we should know',
+  paymentProof: 'Proof of Payment (Bukti Transfer)',
+  paymentProofHint: 'Upload photo/screenshot of receipt or transfer slip (JPG, PNG, PDF up to 10 MB)',
+  paymentProofOptional: '(optional)',
+  paymentProofUploading: 'Uploading receipt…',
+  removePaymentProof: 'Remove receipt',
   quantity: 'Qty',
   total: 'Total',
   yourOrder: 'Your order',
@@ -48,9 +53,49 @@ export const DEFAULT_THEME: FormTheme = {
   background: '#FBF8EE', surface: '#FFFFFF', accent: '#2A5BD7', text: '#26241F', font: 'sans', width: 'normal', radius: 'soft',
 };
 
+export interface ThemePreset {
+  id: string;
+  name: string;
+  description: string;
+  theme: FormTheme;
+}
+
+export const THEME_PRESETS: ThemePreset[] = [
+  {
+    id: 'cream',
+    name: 'Warm Cream',
+    description: 'Classic circle default with warm editorial feel',
+    theme: { background: '#FBF8EE', surface: '#FFFFFF', accent: '#2A5BD7', text: '#26241F', font: 'sans', width: 'normal', radius: 'soft' },
+  },
+  {
+    id: 'cyber',
+    name: 'Midnight Cyber',
+    description: 'Sleek dark mode with electric indigo accents',
+    theme: { background: '#0F1117', surface: '#1E2230', accent: '#6366F1', text: '#F3F4F6', font: 'sans', width: 'normal', radius: 'soft' },
+  },
+  {
+    id: 'sakura',
+    name: 'Pastel Sakura',
+    description: 'Soft manga aesthetic with rose pink accents',
+    theme: { background: '#FFF5F7', surface: '#FFFFFF', accent: '#EC4899', text: '#374151', font: 'rounded', width: 'normal', radius: 'round' },
+  },
+  {
+    id: 'studio',
+    name: 'Clean Studio',
+    description: 'Minimalist high-contrast monochrome design',
+    theme: { background: '#F9FAFB', surface: '#FFFFFF', accent: '#111827', text: '#1F2937', font: 'sans', width: 'normal', radius: 'sharp' },
+  },
+  {
+    id: 'matcha',
+    name: 'Matcha Botanical',
+    description: 'Earthy relaxed tones with rounded styling',
+    theme: { background: '#F4F7F4', surface: '#FFFFFF', accent: '#059669', text: '#1C2E24', font: 'rounded', width: 'normal', radius: 'soft' },
+  },
+];
+
 export const BLOCK_NAMES: Record<FormBlockType, string> = {
   header: 'Header', text: 'Text', image: 'Image', divider: 'Divider', section: 'Section title',
-  products: 'Products', customer: 'Customer details', fulfilment: 'Pickup or mail', notes: 'Notes', submit: 'Submit button',
+  products: 'Products', payment_instructions: 'Payment & QRIS', customer: 'Customer details', fulfilment: 'Pickup or mail', notes: 'Notes', submit: 'Submit button',
 };
 
 // ---- Keys and codes ----
@@ -102,6 +147,7 @@ export function newBlock(type: FormBlockType): FormBlock {
     case 'divider': return { id, type };
     case 'section': return { id, type, title: 'Section' };
     case 'products': return { id, type, source: { kind: 'all' }, layout: 'list', showThumbnails: true, showPrices: true };
+    case 'payment_instructions': return { id, type, title: 'Payment details (Cara Pembayaran)', text: 'Scan QRIS below or transfer to circle bank account.', imageId: '' };
     case 'customer': return { id, type };
     case 'fulfilment': return { id, type };
     case 'notes': return { id, type };
@@ -164,7 +210,11 @@ export function entryPrice(e: OfferingEntry, item: Item): number {
 function groupsFor(entries: OfferingEntry[], items: Map<string, Item>, media: Map<string, Media>): PublicProductGroup[] {
   const groups: PublicProductGroup[] = [];
   const byItem = new Map<string, PublicProductGroup>();
-  const thumb = (id?: string) => (id ? media.get(id)?.dataUrl : undefined);
+  const thumb = (id?: string) => {
+    if (!id) return undefined;
+    const m = media.get(id);
+    return m?.url || m?.dataUrl;
+  };
   for (const e of entries) {
     const item = items.get(e.itemId);
     if (!item) continue;
@@ -195,10 +245,16 @@ export function buildPublicForm(form: FormDoc, batch: Batch, event: Event, items
       for (const g of groups) for (const p of g.products) pfItems[p.key] = { name: p.name, variantName: p.variantName, price: p.price, kind: g.kind };
       blocks.push({ ...b, groups });
     } else if (b.type === 'header') {
-      blocks.push({ ...b, src: b.imageId ? media.get(b.imageId)?.dataUrl : undefined });
+      const m = b.imageId ? media.get(b.imageId) : undefined;
+      blocks.push({ ...b, src: m?.url || m?.dataUrl });
     } else if (b.type === 'image') {
-      const src = media.get(b.imageId)?.dataUrl;
+      const m = b.imageId ? media.get(b.imageId) : undefined;
+      const src = m?.url || m?.dataUrl;
       if (src) blocks.push({ ...b, src });
+    } else if (b.type === 'payment_instructions') {
+      const m = b.imageId ? media.get(b.imageId) : undefined;
+      const src = m?.url || m?.dataUrl;
+      blocks.push({ ...b, src });
     } else if (b.type === 'fulfilment' && batch.mode === 'post') {
       continue; // post batches are mail only
     } else {
@@ -251,6 +307,7 @@ export function formMediaIds(form: FormDoc, batch: Batch, items: Map<string, Ite
   for (const b of form.blocks) {
     if (b.type === 'header' && b.imageId) ids.push(b.imageId);
     if (b.type === 'image' && b.imageId) ids.push(b.imageId);
+    if (b.type === 'payment_instructions' && b.imageId) ids.push(b.imageId);
   }
   for (const e of batch.offering) {
     const item = items.get(e.itemId);

@@ -5,8 +5,12 @@ import { httpsCallable } from 'firebase/functions';
 import { useData } from '@/lib/data';
 import { useAuth } from '@/lib/auth';
 import { useToast } from '@/components/ui/Toast';
-import { settingsRepo, staffRepo } from '@/lib/repo';
-import { functions } from '@/lib/firebase';
+import { collection, deleteField, doc, getDocs, updateDoc } from 'firebase/firestore';
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { db, functions, storage } from '@/lib/firebase';
+import { dataUrlToBlob } from '@/lib/media';
+import { COL, settingsRepo, staffRepo } from '@/lib/repo';
+import type { Media } from '@/types';
 import Button from '@/components/ui/Button';
 import { Checkbox, Field, Input } from '@/components/ui/Field';
 import { PageHeader, Panel, Pill, TableWrap } from '@/components/ui/Bits';
@@ -94,6 +98,8 @@ export default function SettingsPage() {
             </div>
           </Panel>
 
+          <CloudStoragePanel />
+
           <Panel>
             <h2 className="font-bold mb-1">JotForm connection (legacy)</h2>
             <p className="hint mb-3">Only for batches that still use a JotForm. Needs the Cloud Functions deployed, which needs the Blaze plan. New batches use the in-house form.</p>
@@ -112,5 +118,115 @@ export default function SettingsPage() {
         </div>
       </div>
     </>
+  );
+}
+
+function CloudStoragePanel() {
+  const { run } = useToast();
+  const [stats, setStats] = useState<{ total: number; storage: number; inline: number } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [migrating, setMigrating] = useState(false);
+  const [progress, setProgress] = useState('');
+
+  const checkMedia = async () => {
+    setLoading(true);
+    try {
+      const snap = await getDocs(collection(db, COL.media));
+      let inStorage = 0;
+      let inline = 0;
+      snap.forEach((d) => {
+        const m = d.data() as Media;
+        if (m.url) inStorage++;
+        else if (m.dataUrl) inline++;
+      });
+      setStats({ total: snap.size, storage: inStorage, inline });
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    checkMedia();
+  }, []);
+
+  const migrateMedia = async () => {
+    setMigrating(true);
+    setProgress('Finding inline media…');
+    await run(async () => {
+      const snap = await getDocs(collection(db, COL.media));
+      const unmigrated: { id: string; data: Media }[] = [];
+      snap.forEach((d) => {
+        const m = { id: d.id, ...(d.data() as Omit<Media, 'id'>) };
+        if (!m.url && m.dataUrl) unmigrated.push({ id: d.id, data: m });
+      });
+
+      if (unmigrated.length === 0) {
+        setProgress('All media are already stored in Cloud Storage!');
+        return;
+      }
+
+      let count = 0;
+      for (const item of unmigrated) {
+        count++;
+        setProgress(`Migrating ${count}/${unmigrated.length}: ${item.data.name || item.id}…`);
+        try {
+          const blob = dataUrlToBlob(item.data.dataUrl!);
+          const safeName = (item.data.name || 'image').replace(/[^a-zA-Z0-9.-]/g, '_');
+          const storagePath = `media/${item.id}_${safeName}`;
+          const storageRef = ref(storage, storagePath);
+          const uploadSnap = await uploadBytes(storageRef, blob, { contentType: item.data.mime || 'image/jpeg' });
+          const url = await getDownloadURL(uploadSnap.ref);
+
+          await updateDoc(doc(db, COL.media, item.id), {
+            url,
+            storagePath,
+            dataUrl: deleteField(),
+          });
+        } catch (err) {
+          console.error(`Failed to migrate media ${item.id}:`, err);
+        }
+      }
+      setProgress(`Finished migrating ${count} media objects.`);
+      await checkMedia();
+    }, 'Media migration completed');
+    setMigrating(false);
+  };
+
+  const bucket = storage.app.options.storageBucket;
+
+  return (
+    <Panel>
+      <h2 className="font-bold mb-1">Cloud Storage & Media (Phase 4)</h2>
+      <p className="hint mb-3">
+        Cloud Storage stores catalogue images and receipt uploads as files instead of 1 MB Firestore base64 documents.
+      </p>
+      <div className="grid gap-2 text-xs mb-3">
+        <div className="flex items-center gap-2">
+          <span className="text-ink-2 font-medium">Bucket:</span>
+          <span className="mono">{bucket || 'Not configured'}</span>
+        </div>
+        {stats && (
+          <div className="flex items-center gap-2">
+            <span className="text-ink-2 font-medium">Media:</span>
+            <span>
+              <b>{stats.storage}</b> in Cloud Storage · <b>{stats.inline}</b> inline in Firestore (total {stats.total})
+            </span>
+          </div>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <Button size="sm" onClick={checkMedia} busy={loading} disabled={migrating}>
+          Refresh status
+        </Button>
+        {stats && stats.inline > 0 && (
+          <Button size="sm" variant="primary" onClick={migrateMedia} busy={migrating}>
+            Migrate {stats.inline} inline images
+          </Button>
+        )}
+      </div>
+      {progress && <p className="hint mt-2 text-xs font-mono">{progress}</p>}
+    </Panel>
   );
 }

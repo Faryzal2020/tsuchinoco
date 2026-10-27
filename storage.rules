@@ -1,0 +1,33 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Helper to check if caller is an active staff member in Firestore
+    function isStaff() {
+      return request.auth != null
+        && request.auth.token.email != null
+        && firestore.exists(/databases/(default)/documents/staff/$(request.auth.token.email.lower()))
+        && firestore.get(/databases/(default)/documents/staff/$(request.auth.token.email.lower())).data.active == true;
+    }
+
+    // 1. Media: catalogue thumbnails, variant images, header images
+    // Public read so the preorder form can render images from download URLs
+    // Staff write only, max 10 MB, image files only
+    match /media/{allPaths=**} {
+      allow read: if true;
+      allow write: if isStaff()
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // 2. Customer payment proof uploads
+    // Customers (including anonymous) can upload payment receipts for their submission
+    // Max 10 MB, images or PDF
+    // Confidential: only staff can read and delete receipts
+    match /submissions/{subId}/{fileName} {
+      allow create: if request.auth != null
+        && request.resource.size < 10 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*') || request.resource.contentType == 'application/pdf');
+      allow read, delete: if isStaff();
+    }
+  }
+}

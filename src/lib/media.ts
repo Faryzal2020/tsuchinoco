@@ -1,15 +1,15 @@
-'use client';
-
-// Images without Cloud Storage: resized in the browser and stored as data URLs in the
-// `media` collection. Thumbnails are small (240 px) so a whole form fits in one Firestore
-// document when published. Swap the storage side for Cloud Storage later (roadmap phase 4).
+// Cloud Storage media: resized in browser and uploaded to Cloud Storage.
+// Public form snapshots reference download URLs instead of large inline base64 strings.
 import { useEffect, useState } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
-import { db } from './firebase';
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { db, storage } from './firebase';
+import { newId } from './keys';
+import { mediaRepo } from './repo';
 import type { Media } from '@/types';
 
-export const THUMB_MAX = 240;
-export const IMAGE_MAX = 1200;
+export const THUMB_MAX = 480;
+export const IMAGE_MAX = 1600;
 
 export interface ResizedImage { dataUrl: string; width: number; height: number; bytes: number; mime: string }
 
@@ -24,7 +24,7 @@ function loadImage(file: File): Promise<HTMLImageElement> {
 }
 
 /** Scale the longest side down to `max` pixels and encode as JPEG on a white background. */
-export async function resizeImage(file: File, max: number, quality = 0.82): Promise<ResizedImage> {
+export async function resizeImage(file: File, max: number, quality = 0.85): Promise<ResizedImage> {
   const img = await loadImage(file);
   const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
   const width = Math.max(1, Math.round(img.naturalWidth * scale));
@@ -38,6 +38,52 @@ export async function resizeImage(file: File, max: number, quality = 0.82): Prom
   ctx.drawImage(img, 0, 0, width, height);
   const dataUrl = canvas.toDataURL('image/jpeg', quality);
   return { dataUrl, width, height, bytes: Math.round((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75), mime: 'image/jpeg' };
+}
+
+export function dataUrlToBlob(dataUrl: string): Blob {
+  const [header, base64] = dataUrl.split(',');
+  const mime = header.match(/:(.*?);/)?.[1] || 'image/jpeg';
+  const bin = atob(base64);
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return new Blob([u8], { type: mime });
+}
+
+/** Resizes an image file and uploads it to Cloud Storage under media/{id}. */
+export async function uploadMediaFile(file: File, kind: 'thumbnail' | 'image', by: string): Promise<Media> {
+  const r = await resizeImage(file, kind === 'thumbnail' ? THUMB_MAX : IMAGE_MAX);
+  const id = newId();
+  const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+  const storagePath = `media/${id}_${safeName}`;
+
+  let url: string | undefined;
+  try {
+    const blob = dataUrlToBlob(r.dataUrl);
+    const storageRef = ref(storage, storagePath);
+    const snap = await uploadBytes(storageRef, blob, { contentType: r.mime });
+    url = await getDownloadURL(snap.ref);
+  } catch (err) {
+    console.warn('[media] Could not upload to Cloud Storage, falling back to dataUrl:', err);
+  }
+
+  const media: Media = {
+    id,
+    kind,
+    mime: r.mime,
+    url,
+    storagePath: url ? storagePath : undefined,
+    dataUrl: url ? undefined : r.dataUrl, // only fallback if storage upload failed
+    width: r.width,
+    height: r.height,
+    bytes: r.bytes,
+    name: file.name,
+    createdAt: Date.now(),
+    createdBy: by,
+  };
+
+  await mediaRepo.createWithId(media);
+  primeMedia(media);
+  return media;
 }
 
 export const formatBytes = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`);

@@ -1,172 +1,221 @@
-# Deployment guide
+# Deployment Guide
 
-Everything needed to take the project from a fresh clone to a working deployment, including the parts that must be done by hand in the Firebase console.
+Complete instructions to deploy Tsuchinoco from a fresh clone to a working production setup on Firebase, including console configurations, Cloud Storage, and day-to-day operations.
 
-The current Firebase project id is in `.firebaserc` (`tsuchinoco-318b2`). Replace it if you deploy to a different project.
+The current Firebase project is configured in `.firebaserc` (`tsuchinoco-318b2`).
 
-## Plan requirements
+---
 
-The app is built so that everything needed to run the preorder form, orders, stock, planning, and wrap-up works on the **free Spark plan**: Firestore, Authentication, and Hosting. Nothing in the main app calls a Cloud Function.
+## Architecture & Plan
 
-Two things need the **Blaze plan** and are deferred (see `docs/ROADMAP.md`):
+Tsuchinoco runs entirely on the **Firebase Blaze plan** (pay-as-you-go with generous free tier allowances):
 
-- Cloud Functions, used only by the legacy JotForm integration in `functions/`. Do not deploy it on Spark; the deploy fails.
-- Cloud Storage, for payment-proof uploads and larger images.
+- **Firebase Hosting**: Serves the Next.js static export (`out/`). Both the staff management app and the customer preorder forms (`/f/?id=<batchId>`) are part of this build.
+- **Cloud Firestore**: Holds application state, catalogue items, event batches, submissions, orders, and public form snapshots.
+- **Cloud Storage**: Stores high-resolution item thumbnails (`media/{id}`) and customer payment proof receipts (`submissions/{id}/`).
+- **Firebase Authentication**:
+  - **Google Provider**: Authenticates staff members against the `staff` Firestore collection.
+  - **Anonymous Provider**: Grants temporary customer credentials to submit preorder forms and upload payment receipts securely without creating user accounts.
+
+> [!NOTE]
+> No Cloud Functions are required for the standard preorder flow. All submission imports and pricing calculations run directly in the staff browser app.
+
+---
 
 ## Prerequisites
 
-- Node.js 20 or newer and npm.
-- Firebase CLI: `npm install -g firebase-tools`, then `firebase login`.
-- Java 11 or newer, only for the local emulators.
-- A Google account that will become the first staff member.
+- **Node.js 20 or newer** and npm.
+- **Firebase CLI**: `npm install -g firebase-tools`, followed by `firebase login`.
+- **Java 11 or newer** (only required if running local Firebase emulators).
+- A **Google account** that will become the primary staff administrator.
 
-## 1. Firebase project
+---
 
-In the [Firebase console](https://console.firebase.google.com/):
+## 1. Firebase Project & Plan Setup
 
-1. Create a project, or open the existing one. Stay on the Spark plan for now.
-2. Under **Project settings → General → Your apps**, add a **Web app**. Do not enable Firebase Hosting from this dialog, it is configured by `firebase.json`. Copy the `firebaseConfig` values; they go into `.env.local` (step 5) and into the hosting build.
+In the [Firebase Console](https://console.firebase.google.com/):
 
-## 2. Authentication
+1. Open your project (or create a new one).
+2. Upgrade to the **Blaze plan** (Billing → Modify plan). Set a budget alert for peace of mind (daily usage for convention preorders typically stays within free quotas).
+3. Under **Project settings → General → Your apps**, add a **Web app** (e.g. `tsuchinoco-web`).
+4. Copy the `firebaseConfig` object keys; they will be placed in `.env.local` (Step 6).
 
-**Build → Authentication → Get started.**
+---
 
-1. **Sign-in method → Add new provider → Google.** Enable it. Set a support email. Save. This is the staff sign-in.
-2. **Sign-in method → Add new provider → Anonymous.** Enable it. The public preorder form signs customers in anonymously right before they submit, so that the security rules can require a signed-in user. No customer account is ever created.
-3. **Settings → Authorized domains.** `localhost` and the `*.web.app` / `*.firebaseapp.com` domains are added automatically. Add any custom domain you attach later.
+## 2. Authentication Configuration
 
-There are no roles; staff access is decided by the `staff` collection.
+In the Firebase Console under **Build → Authentication**:
 
-## 3. Firestore
+1. **Sign-in method → Add new provider → Google**:
+   - Enable Google sign-in. Set a project support email and save.
+2. **Sign-in method → Add new provider → Anonymous**:
+   - Enable Anonymous sign-in. This enables customers on `/f/` to submit preorders and upload payment receipts under Firestore/Storage security rules without registration.
+3. **Settings → Authorized domains**:
+   - `localhost` and your `*.web.app` / `*.firebaseapp.com` domains are added automatically. Add any custom domain you connect later.
 
-**Build → Firestore Database → Create database.**
+---
 
-1. Choose a region close to the team. `asia-southeast1` (Singapore) or `asia-southeast2` (Jakarta) are the usual choices. The region cannot be changed later.
-2. Start in **production mode**. The rules in the repo replace the defaults on first deploy.
+## 3. Firestore Database
 
-Firestore offline persistence is enabled in the app, so no console setting is needed for that.
+In the Firebase Console under **Build → Firestore Database**:
 
-## 4. First staff member (manual, once)
+1. Click **Create database**.
+2. Select a region close to your circle/customers (e.g. `asia-southeast1` Singapore or `asia-southeast2` Jakarta).
+3. Start in **production mode**. The repository's `firestore.rules` will be deployed in Step 7.
 
-The security rules only admit emails that exist in the `staff` collection, so the very first document has to be created by hand.
+---
+
+## 4. Cloud Storage
+
+In the Firebase Console under **Build → Storage**:
+
+1. Click **Get started**.
+2. Choose the same region as your Firestore database.
+3. Keep the default bucket name (e.g. `tsuchinoco-318b2.firebasestorage.app`).
+4. When deploying storage rules for the first time, Firebase CLI may request permission to grant the cross-service IAM role so Cloud Storage can verify staff status via Firestore rules. Accept this prompt (`Yes`).
+
+---
+
+## 5. First Staff Administrator (One-time Setup)
+
+Firestore security rules enforce that only emails listed in the `staff` collection can access admin functions. Because the collection starts empty, create the first administrator record manually:
 
 **Firestore Database → Data → Start collection:**
 
-- Collection ID: `staff`
-- Document ID: your Google email, **lower-case** (for example `name@gmail.com`)
-- Fields:
+- **Collection ID**: `staff`
+- **Document ID**: your Google account email in **all lower-case** (e.g. `fary290796@gmail.com`)
+- **Fields**:
 
 | Field | Type | Value |
-| --- | --- | --- |
-| `email` | string | same as the document id |
+| :--- | :--- | :--- |
+| `email` | string | same as document ID (lower-case) |
 | `displayName` | string | your name |
 | `active` | boolean | `true` |
-| `createdAt` | number | any number, e.g. `0` |
-| `updatedAt` | number | any number, e.g. `0` |
+| `createdAt` | number | current timestamp (e.g. `0`) |
+| `updatedAt` | number | current timestamp (e.g. `0`) |
 | `updatedBy` | string | `console` |
 
-After this one document, everyone else is added from **Settings → Staff** inside the app.
+> [!TIP]
+> After this initial document is created, all subsequent team members can be added directly inside the app under **Settings → Staff**.
 
-## 5. Environment file
+---
+
+## 6. Environment Configuration
+
+Copy the template to create your local environment file:
 
 ```bash
 cp env.template .env.local
 ```
 
-Fill in the six `NEXT_PUBLIC_FIREBASE_*` values from step 1. `.env.local` is git-ignored. For CI builds, provide the same variables as environment variables. `NEXT_PUBLIC_FIREBASE_FUNCTIONS_REGION` only matters for the legacy JotForm functions.
+Fill in `.env.local` with your project credentials:
 
-## 6. Deploy (Spark)
+```ini
+NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSy...
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=tsuchinoco-318b2.firebaseapp.com
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=tsuchinoco-318b2
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=tsuchinoco-318b2.firebasestorage.app
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=...
+NEXT_PUBLIC_FIREBASE_APP_ID=1:...
 
-From the repo root:
+# Optional: JotForm API Key for importing past thumbnails & form items
+JOTFORM_API_KEY=your_jotform_api_key_here
+```
+
+---
+
+## 7. Build and Deploy
+
+Run the following commands from the project root:
 
 ```bash
+# 1. Install dependencies
 npm install
-```
 
-Deploy the rules first, then hosting.
-
-```bash
-firebase deploy --only firestore
-```
-
-```bash
+# 2. Typecheck and build the Next.js static export
 npm run build
+
+# 3. Deploy Firestore rules/indexes, Cloud Storage rules, and Hosting
+firebase deploy --only firestore,storage,hosting
 ```
+
+### What Each Deploy Target Deploys
+
+| Target | Source Files | Description |
+| :--- | :--- | :--- |
+| `firestore` | `firestore.rules`, `firestore.indexes.json` | Staff access control, anonymous customer submission limits, and compound indexes. |
+| `storage` | `storage.rules` | Public read access for item thumbnails (`media/**`) and anonymous customer upload access for payment receipts (`submissions/**`). |
+| `hosting` | `out/` | Pre-rendered static pages for both the staff app and public preorder forms (`/f/?id=...`). |
+
+The live application will be served at `https://<project-id>.web.app`.
+
+---
+
+## 8. Importing Assets from JotForm (Optional)
+
+If migrating from an existing JotForm convention form:
 
 ```bash
-firebase deploy --only hosting
+# Preview matched catalogue items and thumbnails without writing
+npm run import:jotform
+
+# Download images from JotForm, upload to Cloud Storage, and link thumbnails
+npm run import:jotform -- --apply
 ```
 
-Do **not** run a bare `firebase deploy` on the Spark plan: it tries to deploy `functions/` and fails.
+This script matches your Firestore catalogue items against JotForm products, uploads thumbnails to Cloud Storage, creates Firestore `media` documents, and extracts your QRIS payment image.
 
-The site is served at `https://<project-id>.web.app`. The public preorder form of a batch is `https://<project-id>.web.app/f/?id=<batchId>`; the staff app shows and copies this link.
+---
 
-### What each deploy target does
+## 9. Day-to-Day Operations
 
-| Target | Source | Notes |
-| --- | --- | --- |
-| `firestore` | `firestore.rules`, `firestore.indexes.json` | The rules file is the whole access model, including the two public exceptions for the form. |
-| `hosting` | `out/` | Produced by `npm run build`. `trailingSlash` is on, so every page is a folder with an `index.html`. The customer page `/f/` is part of the same build. |
-| `functions` | `functions/` | Legacy JotForm integration. Blaze only. |
+- **Managing Staff**: Add or invite team members under **Settings → Staff**. Set a member to inactive instead of deleting to preserve their edit audit trails.
+- **Creating & Customizing Preorder Forms**:
+  1. Go to **Events** → Select or create an event (e.g. `CF23`).
+  2. In **Batch 1**, select **Edit offering** to choose which items and bundles to sell.
+  3. Click **Create form**, then click **Edit layout** to open the **Form Studio** (`/forms/editor/?id=<batchId>`).
+  4. Customize product blocks (grid or list), attach your QRIS barcode & bank instructions in the **Payment & QRIS** block, select a theme preset (e.g. *Warm Cream* or *Midnight Cyber*), and adjust settings.
+  5. Click **Publish**. Share the generated public link (`https://<project-id>.web.app/f/?id=<batchId>`) with buyers.
+- **Handling Customer Submissions**:
+  - When buyers submit their order and upload receipt images, submissions are saved to the `submissions` collection.
+  - When staff has the app open (e.g. in **Orders**), submissions are automatically validated, expanded into order lines, and given sequential order IDs (e.g. `CF23_1_0001`).
+  - Open any order in the Orders tab to view the customer's uploaded payment proof receipt.
+- **Pausing or Closing Forms**:
+  - To pause orders without closing the batch, toggle **Accepting** off on the **Forms** list page.
+  - To finalize and close the batch, click **Close batch** on the event batch card.
 
-## 7. Verify
+---
 
-1. Open the site and sign in with the Google account from step 4. You land on **Orders**.
-2. Catalogue: add a test item and give it a thumbnail.
-3. Events: create an event with a code (for example `TEST`), add batch 1, pick the item in the offering, **Create form**, then **Publish**. Open the form link in a private window.
-4. Submit the form once. Back in the staff app, Orders shows the submission being imported and then the order with an ID like `TEST_1_0001`.
-5. Delete the test item and event afterwards, or keep the event and cancel the test order.
+## 10. Local Development & Emulators
 
-## 8. Day-to-day operations
+To run locally with the Firebase Emulator Suite:
 
-- **Adding staff:** Settings → Staff → Add. Deactivate instead of deleting so names stay on history.
-- **Changing the offering or layout after publishing:** edit, then **Publish** again on the batch card or Forms page. Customers see the new version on their next load.
-- **Stopping submissions:** close the batch, or flip **Accepting** on the Forms page.
-- **Submissions that did not become orders:** Orders shows them under "New submissions" with the reason. Import runs automatically while the app is open; use **Import now** after fixing the cause.
-- **Backups:** Firestore has no automatic backups on the free tier. Export CSVs from the app before and after each event. Scheduled exports need Blaze.
+1. Start emulators:
+   ```bash
+   firebase emulators:start --only auth,firestore,storage,hosting
+   ```
+2. Enable emulators in `.env.local`:
+   ```ini
+   NEXT_PUBLIC_USE_EMULATORS=1
+   ```
+3. Run the Next.js development server:
+   ```bash
+   npm run dev
+   ```
+   - Staff dashboard: `http://localhost:3000`
+   - Public preorder form: `http://localhost:3000/f/?id=<batchId>`
+   - Firebase Emulator UI: `http://localhost:4000`
 
-## Local emulators
+---
 
-Needs Java and `firebase-tools` installed.
+## 11. Troubleshooting
 
-```bash
-firebase emulators:start --only auth,firestore,hosting
-```
-
-To point the web app at the emulators, add to `.env.local`:
-
-```
-NEXT_PUBLIC_USE_EMULATORS=1
-```
-
-`src/lib/firebase.ts` then connects Firestore and Auth to the emulator ports in `firebase.json`. The emulated Firestore starts empty, so create the first `staff` document in the emulator UI (http://localhost:4000) just as in step 4. The Auth emulator accepts anonymous sign-in without any setup.
-
-Run the Next.js dev server separately with `npm run dev`; the customer page is then `http://localhost:3000/f/?id=<batchId>`.
-
-## Moving to Blaze later
-
-1. Upgrade the project in the console (Billing → Modify plan). Set a budget alert.
-2. Storage: **Build → Storage → Get started**, then follow the phase 4 notes in `docs/ROADMAP.md`.
-3. Functions: `npm --prefix functions install`, then `firebase deploy --only functions`. The first deploy takes several minutes while Google enables Cloud Build, Artifact Registry, and Eventarc. Only needed if the legacy JotForm path or the planned server-side features are wanted.
-
-## Legacy: JotForm functions
-
-Kept for reference until the JotForm path is removed. Requires Blaze.
-
-1. JotForm: **avatar → Settings → API → Create New Key** with **Full Access**.
-2. Store it as a secret: `firebase functions:secrets:set JOTFORM_API_KEY`. EU accounts set `JOTFORM_API_BASE=https://eu-api.jotform.com` at deploy time.
-3. `firebase deploy --only functions`. The webhook URL is `https://asia-southeast1-<project-id>.cloudfunctions.net/jotformWebhook`.
-4. Settings → JotForm connection → **Test connection** reports the connected username.
-
-## Troubleshooting
-
-| Symptom | Cause | Fix |
-| --- | --- | --- |
-| "Firebase is not configured" screen | `.env.local` missing or values blank | Step 5, then restart `npm run dev` |
-| "Not on the staff list" after sign-in | No active `staff/<email>` document, or email case mismatch | Step 4; the document id must be lower-case |
-| Sign-in popup blocked or `auth/unauthorized-domain` | Domain not in Authorized domains | Step 2 |
-| Customer form says "could not submit" with `permission-denied` | Anonymous provider not enabled, rules not deployed, or the public form is disabled | Step 2.2, `firebase deploy --only firestore`, check Accepting on the Forms page |
-| Customer form shows "Form not found" | Not published yet, or wrong id in the link | Publish from the batch card or Forms page |
-| Publish fails with "too large" | Too many or too big images for one Firestore document | Replace big thumbnails; the message names the heaviest ones |
-| Orders do not appear after a customer submits | No staff member has the app open; import runs in the browser | Open Orders; use Import now |
-| `firebase deploy` fails mentioning functions or Blaze | Bare deploy on the Spark plan | Use `--only firestore` and `--only hosting` |
+| Symptom | Cause | Solution |
+| :--- | :--- | :--- |
+| **"Firebase is not configured" screen** | `.env.local` is missing or keys are blank | Ensure `.env.local` has all 6 `NEXT_PUBLIC_FIREBASE_*` variables and restart `npm run dev`. |
+| **"Not on the staff list" after sign-in** | Missing `staff/<email>` record or letter casing mismatch | Check Step 5 in Firestore. The document ID must be all lower-case. |
+| **Sign-in popup blocked or `auth/unauthorized-domain`** | Custom domain not listed in authorized domains | Add the domain under Firebase Console → Authentication → Settings → Authorized domains. |
+| **Customer form says "could not submit" (`permission-denied`)** | Anonymous authentication is disabled or Firestore rules are out of date | Enable Anonymous provider in Auth (Step 2.2) and run `firebase deploy --only firestore`. |
+| **Payment receipt upload fails on customer form** | Cloud Storage rules not deployed or bucket name misconfigured | Ensure `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` matches your console bucket and run `firebase deploy --only storage`. |
+| **Public form shows "Form not found"** | Batch form has not been published yet | Click **Publish** on the batch card or in the Form Studio. |
+| **Orders do not appear after submission** | No staff member has the web app open | Open the **Orders** page in any browser tab; the client-side importer processes pending submissions into orders. |

@@ -30,7 +30,7 @@ interface Props {
   form: Snapshot;
   /** Preview inside the staff app: nothing is sent, the closed state is ignored. */
   preview?: boolean;
-  onSubmit?: (draft: SubmissionDraft) => Promise<void>;
+  onSubmit?: (draft: SubmissionDraft, proofFile?: File) => Promise<void>;
 }
 
 interface Errors { name?: string; email?: string; phone?: string; pickupDay?: string; address?: string; lines?: string; submit?: string }
@@ -44,6 +44,7 @@ export default function FormRenderer({ form, preview, onSubmit }: Props) {
   const [c, setC] = useState({ name: '', email: '', phone: '', address: '', notes: '', website: '' });
   const [fulfilment, setFulfilment] = useState<Fulfilment>(form.mode === 'post' ? 'mail' : 'pickup');
   const [pickupDay, setPickupDay] = useState('');
+  const [proofFile, setProofFile] = useState<File | null>(null);
   const [errors, setErrors] = useState<Errors>({});
   const [phase, setPhase] = useState<'form' | 'sending' | 'done'>('form');
   const [code, setCode] = useState('');
@@ -91,7 +92,7 @@ export default function FormRenderer({ form, preview, onSubmit }: Props) {
     setPhase('sending');
     try {
       // Honeypot: bots fill the hidden field. Pretend it worked and write nothing.
-      if (!c.website && onSubmit && !preview) await onSubmit(draft);
+      if (!c.website && onSubmit && !preview) await onSubmit(draft, proofFile ?? undefined);
       setCode(newCode);
       setPhase('done');
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -138,11 +139,15 @@ export default function FormRenderer({ form, preview, onSubmit }: Props) {
                 return (
                   <Block key={b.id} block={b} L={L} form={form} qty={qty} setQ={setQ} max={max} c={c} setC={setC} errors={errors}
                     fulfilment={effectiveFulfilment} setFulfilment={setFulfilment} pickupDay={pickupDay} setPickupDay={setPickupDay}
+                    proofFile={proofFile} setProofFile={setProofFile}
                     chosen={chosen} total={total} sending={phase === 'sending'} />
                 );
               })}
               {!form.blocks.some((b) => b.type === 'submit') && (
-                <SubmitBlock L={L} form={form} chosen={chosen} total={total} errors={errors} sending={phase === 'sending'} />
+                <>
+                  <PaymentProofBlock L={L} proofFile={proofFile} setProofFile={setProofFile} disabled={phase === 'sending'} />
+                  <SubmitBlock L={L} form={form} chosen={chosen} total={total} errors={errors} sending={phase === 'sending'} hasProof={!!proofFile} />
+                </>
               )}
               {/* Honeypot, invisible to people. */}
               <div style={{ position: 'absolute', left: -9999, top: 'auto', width: 1, height: 1, overflow: 'hidden' }} aria-hidden="true">
@@ -184,6 +189,8 @@ interface BlockProps {
   setFulfilment: (f: Fulfilment) => void;
   pickupDay: string;
   setPickupDay: (d: string) => void;
+  proofFile: File | null;
+  setProofFile: (f: File | null) => void;
   chosen: { key: string; qty: number; item: Snapshot['items'][string] }[];
   total: number;
   sending: boolean;
@@ -253,11 +260,197 @@ function Block(p: BlockProps) {
           </Field>
         </div>
       );
+    case 'payment_instructions':
+      return (
+        <div className="pf-card pf-grid">
+          {b.title && <div className="pf-title" style={{ fontSize: '15px' }}>{b.title}</div>}
+          {b.text && (
+            <div className="pf-text" style={{ fontSize: '13px', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+              {b.text}
+            </div>
+          )}
+          {b.src && (
+            <div style={{ textAlign: 'center', marginTop: 6 }}>
+              <img
+                src={b.src}
+                alt="QRIS Payment"
+                style={{
+                  maxWidth: '240px',
+                  width: '100%',
+                  borderRadius: 'var(--pf-radius)',
+                  border: '1px solid rgba(0,0,0,0.1)',
+                  margin: '0 auto',
+                  display: 'block',
+                  background: '#ffffff',
+                  padding: '8px',
+                }}
+              />
+              <span className="pf-hint" style={{ fontSize: '11px', display: 'block', marginTop: 4 }}>
+                Scan QRIS to pay
+              </span>
+            </div>
+          )}
+        </div>
+      );
     case 'submit':
-      return <SubmitBlock L={L} form={form} chosen={p.chosen} total={p.total} errors={errors} sending={p.sending} />;
+      return (
+        <React.Fragment key={b.id}>
+          <PaymentProofBlock L={L} proofFile={p.proofFile} setProofFile={p.setProofFile} disabled={p.sending} />
+          <SubmitBlock L={L} form={form} chosen={p.chosen} total={p.total} errors={errors} sending={p.sending} hasProof={!!p.proofFile} />
+        </React.Fragment>
+      );
     default:
       return null;
   }
+}
+
+function PaymentProofBlock({
+  L,
+  proofFile,
+  setProofFile,
+  disabled,
+}: {
+  L: (k: FormLabelKey) => string;
+  proofFile: File | null;
+  setProofFile: (f: File | null) => void;
+  disabled: boolean;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!proofFile || !proofFile.type.startsWith('image/')) {
+      setPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(proofFile);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [proofFile]);
+
+  const onSelect = (file: File | undefined) => {
+    setError(null);
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      setError('File must be smaller than 10 MB.');
+      return;
+    }
+    if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
+      setError('Please choose an image (JPG, PNG, WebP) or PDF receipt.');
+      return;
+    }
+    setProofFile(file);
+    if (inputRef.current) inputRef.current.value = '';
+  };
+
+  return (
+    <div className="pf-card pf-grid">
+      <Field label={L('paymentProof')} hint={L('paymentProofHint')} error={error ?? undefined}>
+        {!proofFile ? (
+          <div>
+            <button
+              type="button"
+              className="pf-submit"
+              style={{
+                background: 'transparent',
+                color: 'var(--pf-accent)',
+                border: '1.5px dashed var(--pf-accent)',
+                fontWeight: 600,
+                padding: '12px 16px',
+                fontSize: '13px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                width: 'auto',
+                cursor: disabled ? 'not-allowed' : 'pointer',
+              }}
+              disabled={disabled}
+              onClick={() => inputRef.current?.click()}
+            >
+              <span style={{ fontSize: '16px', lineHeight: 1 }}>+</span>
+              <span>Upload receipt {L('paymentProofOptional')}</span>
+            </button>
+            <input
+              ref={inputRef}
+              type="file"
+              accept="image/*,application/pdf"
+              style={{ display: 'none' }}
+              onChange={(e) => onSelect(e.target.files?.[0])}
+            />
+          </div>
+        ) : (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              padding: 10,
+              borderRadius: 'var(--pf-radius)',
+              border: '1px solid rgba(0,0,0,0.1)',
+              background: 'var(--pf-bg)',
+            }}
+          >
+            {previewUrl ? (
+              <img
+                src={previewUrl}
+                alt="Receipt preview"
+                style={{
+                  width: 52,
+                  height: 52,
+                  objectFit: 'cover',
+                  borderRadius: 6,
+                  border: '1px solid rgba(0,0,0,0.1)',
+                }}
+              />
+            ) : (
+              <div
+                style={{
+                  width: 52,
+                  height: 52,
+                  borderRadius: 6,
+                  background: 'var(--pf-surface)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: 'var(--pf-accent)',
+                  border: '1px solid rgba(0,0,0,0.1)',
+                }}
+              >
+                PDF
+              </div>
+            )}
+            <div style={{ flex: 1, minWidth: 0, fontSize: 13 }}>
+              <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {proofFile.name}
+              </div>
+              <div className="pf-hint" style={{ fontSize: 11, marginTop: 2 }}>
+                {(proofFile.size / 1024 / 1024).toFixed(2)} MB
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => setProofFile(null)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#dc2626',
+                cursor: 'pointer',
+                fontSize: 12,
+                padding: '6px 10px',
+                fontWeight: 600,
+              }}
+            >
+              {L('removePaymentProof')}
+            </button>
+          </div>
+        )}
+      </Field>
+    </div>
+  );
 }
 
 function AddressField({ L, c, setC, error }: Pick<BlockProps, 'L' | 'c' | 'setC'> & { error?: string }) {
@@ -268,8 +461,9 @@ function AddressField({ L, c, setC, error }: Pick<BlockProps, 'L' | 'c' | 'setC'
   );
 }
 
-function SubmitBlock({ L, form, chosen, total, errors, sending }: Pick<BlockProps, 'L' | 'form' | 'chosen' | 'total' | 'errors' | 'sending'>) {
+function SubmitBlock({ L, form, chosen, total, errors, sending, hasProof }: Pick<BlockProps, 'L' | 'form' | 'chosen' | 'total' | 'errors' | 'sending'> & { hasProof?: boolean }) {
   // Post batches have no fulfilment block, so the address lives here.
+  const sendingText = hasProof ? L('paymentProofUploading') : L('submitting');
   return (
     <div className="pf-card pf-grid">
       <div className="pf-summary">
@@ -277,7 +471,7 @@ function SubmitBlock({ L, form, chosen, total, errors, sending }: Pick<BlockProp
         {chosen.length === 0 ? <div className={errors.lines ? 'pf-error' : 'pf-hint'}>{L('emptyOrder')}</div> : <Summary lines={chosen} total={total} currency={form.currency} L={L} />}
       </div>
       {errors.submit && <div className="pf-error">{errors.submit}</div>}
-      <button type="submit" className="pf-submit" disabled={sending}>{sending ? L('submitting') : `${L('submit')}${total > 0 ? ` · ${formatMoney(total, form.currency)}` : ''}`}</button>
+      <button type="submit" className="pf-submit" disabled={sending}>{sending ? sendingText : `${L('submit')}${total > 0 ? ` · ${formatMoney(total, form.currency)}` : ''}`}</button>
     </div>
   );
 }

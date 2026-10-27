@@ -67,8 +67,13 @@ export default function FormsPage() {
                   <td className="num">{waiting > 0 ? <Pill tone="yellow">{waiting}</Pill> : '—'}</td>
                   <td className="text-right whitespace-nowrap">
                     {!form && !legacy && <Button size="sm" variant="primary" disabled={b.offering.length === 0} title={b.offering.length === 0 ? 'Pick the offering first' : undefined} busy={busy === `create:${b.id}`} onClick={() => act(`create:${b.id}`, () => createFormForBatch(b, e!, itemsById, me), 'Form created')}>Create form</Button>}
-                    {form && <Button size="sm" href={`/forms/preview/?id=${form.id}`}>Preview</Button>}
-                    {form && <Button size="sm" variant={pub && !changed ? 'neutral' : 'primary'} className="ml-1" busy={busy === `pub:${b.id}`} onClick={() => act(`pub:${b.id}`, () => publishForm(form, b, e!, itemsById, settings, pub, me), pub ? 'Republished' : 'Published')}>{pub ? 'Republish' : 'Publish'}</Button>}
+                    {form && (
+                      <div className="flex flex-wrap gap-1 justify-end">
+                        <Button size="sm" href={`/forms/editor/?id=${form.id}`}>Edit layout</Button>
+                        <Button size="sm" href={`/forms/preview/?id=${form.id}`}>Preview</Button>
+                        <Button size="sm" variant={pub && !changed ? 'neutral' : 'primary'} busy={busy === `pub:${b.id}`} onClick={() => act(`pub:${b.id}`, () => publishForm(form, b, e!, itemsById, settings, pub, me), pub ? 'Republished' : 'Published')}>{pub ? 'Republish' : 'Publish'}</Button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               );
@@ -76,7 +81,7 @@ export default function FormsPage() {
           </tbody>
         </TableWrap>
       )}
-      <p className="hint mt-3">Layout editing and templates arrive in the next phase; for now each form uses the default layout built from its offering. Customers see changes on their next page load after a publish.</p>
+      <p className="hint mt-3">Click <strong>Edit layout</strong> to customize blocks, reorder products, configure QRIS &amp; bank payment instructions, apply theme presets, and save templates in the Form Studio. Customers see changes on their next page load after a publish.</p>
     </>
   );
 }

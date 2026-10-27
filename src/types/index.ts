@@ -230,13 +230,15 @@ export interface Wrapup {
   updatedBy: string;
 }
 
-// ---- Media (images stored inline until Cloud Storage is available) ----
+// ---- Media (Cloud Storage or inline data URLs) ----
 
 export interface Media {
   id: string;
   kind: 'thumbnail' | 'image';
   mime: string;
-  dataUrl: string;
+  dataUrl?: string;
+  url?: string;
+  storagePath?: string;
   width: number;
   height: number;
   bytes: number;
@@ -270,6 +272,7 @@ export type FormBlock =
   | { id: string; type: 'divider' }
   | { id: string; type: 'section'; title: string; description?: string }
   | { id: string; type: 'products'; title?: string; source: ProductsSource; layout: 'list' | 'grid'; showThumbnails: boolean; showPrices: boolean }
+  | { id: string; type: 'payment_instructions'; title?: string; text?: string; imageId?: string }
   | { id: string; type: 'customer' }
   | { id: string; type: 'fulfilment' }
   | { id: string; type: 'notes' }
@@ -309,6 +312,7 @@ export interface FormDoc {
 export interface FormTemplate {
   id: string;
   name: string;
+  description?: string;
   theme: FormTheme;
   blocks: FormBlock[];
   labels: Record<string, string>;
@@ -376,6 +380,7 @@ export interface Submission {
   customer: { name: string; email: string; phone: string; address?: string };
   fulfilment: Fulfilment;
   pickupDay?: string;
+  paymentProofUrl?: string;
   notes: string;
   lines: Record<string, number>;
   submittedAt: number;

@@ -2,9 +2,10 @@
 
 // Public preorder form. Reads only publicForms/{id}; writes one submission. No staff gate.
 import React, { useEffect, useState } from 'react';
-import { addDoc, collection, doc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { signInAnonymously } from 'firebase/auth';
-import { auth, db, isFirebaseConfigured } from '@/lib/firebase';
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { auth, db, isFirebaseConfigured, storage } from '@/lib/firebase';
 import { clean, COL } from '@/lib/repo';
 import { DEFAULT_FORM_LABELS, DEFAULT_THEME } from '@/lib/forms';
 import { QueryPage, useQuery } from '@/lib/useQuery';
@@ -36,9 +37,19 @@ function CustomerForm() {
   if (form === undefined) return <Message title="…" />;
   if (form === null) return <Message title={DEFAULT_FORM_LABELS.notFound} />;
 
-  const submit = async (draft: SubmissionDraft) => {
+  const submit = async (draft: SubmissionDraft, proofFile?: File) => {
     if (!auth.currentUser) await signInAnonymously(auth);
-    await addDoc(collection(db, COL.submissions), clean(draft));
+    const subRef = doc(collection(db, COL.submissions));
+    let paymentProofUrl: string | undefined = undefined;
+
+    if (proofFile) {
+      const safeName = proofFile.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const storageRef = ref(storage, `submissions/${subRef.id}/${Date.now()}_${safeName}`);
+      const snap = await uploadBytes(storageRef, proofFile, { contentType: proofFile.type });
+      paymentProofUrl = await getDownloadURL(snap.ref);
+    }
+
+    await setDoc(subRef, clean({ ...draft, paymentProofUrl }));
   };
 
   return <FormRenderer key={form.version} form={form} onSubmit={submit} />;

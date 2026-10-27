@@ -22,19 +22,22 @@ Everything in phases 1 and 2 runs with Firestore, Authentication, and Hosting on
 - **Orders** menu replaces Dashboard: all orders across upcoming events, filters, search, new-submission status, and the existing order detail modal.
 - **Forms** menu: every form with event, batch, published state, accepting toggle, link copy, preview, and new-submission count.
 
-## Phase 2 — form builder and templates
+## Phase 2 — form builder and templates (Implemented)
 
 Goal: the same level of customization staff used in JotForm, scoped to what the circle actually uses.
 
-- Block editor on the form page: add, remove, reorder (drag or move buttons), and edit blocks: header (title, subtitle, image), text, image, divider, section, products (source by item type, bundles, or hand-picked entries; list or grid; thumbnails on or off; show prices), customer details, fulfilment, notes, submit button label.
-- Theme editor: background, surface, accent, text colour, font family, width, corner radius. Live preview beside the editor.
-- Labels editor for every customer-facing string (bilingual defaults already exist in phase 1).
-- Pickup days editor (defaults to the event dates).
-- Settings: max quantity per line, required phone or email, thank-you and closed messages.
-- Templates in `formTemplates`: save any form as a template (theme, blocks with unresolved product sources, labels, settings), apply a template to an existing form without touching its offering, pick a template when creating a form, mark one as default.
-- Duplicate layout from another event's form in one click.
-- Preview from the editor at any time, including unpublished changes.
-- "Changed since publish" indicator and one-click republish.
+- **Split-Screen Form Studio (`/forms/editor/?id=<batchId>`):** Real-time interactive preview beside the control panel, with a responsive viewport switch (Desktop vs. 390px Mobile phone frame) and payload size gauge relative to the 950 KB limit.
+- **Block Editor:** Add, remove, reorder (move up/down), and customize individual form sections:
+  - **Product Catalog:** Filter by category/type, bundles-only, all items, or hand-picked specific items; toggle between 2-column card Grid and compact List; toggle thumbnails and prices.
+  - **Payment Instructions & QRIS:** Dedicated payment block supporting bank account details, transfer notes, and QRIS barcode image upload (placed immediately above the payment proof upload dropzone).
+  - **Content Blocks:** Header banner (with top image upload), announcements/terms (Text), posters/maps (Image), Section headers, and Divider lines.
+  - **Checkout Flow:** Customer info, Fulfilment options, Buyer notes, and Submit button.
+- **Theme Studio:** 5 curated one-click presets (*Warm Cream*, *Midnight Cyber*, *Pastel Sakura*, *Clean Studio*, *Matcha Green*) plus custom overrides for background, surface card, accent, text colors, font style (sans, serif, rounded), layout width, and border radius.
+- **Form Settings:** Custom pickup days manager (with 1-click reset to event dates), required phone and email flags, max quantity per line, thank-you message, and closed message.
+- **Templates & Fast Clone:**
+  - **1-Click Past Batch Clone:** Instantly clone layout, theme, payment instructions, and settings from any past event batch while preserving the current batch's offering.
+  - **Template Library (`templates` collection):** Save any form design as a template, apply saved templates to any batch, set default template for new batches, and manage templates.
+- **Publish & Change Tracking:** "Changed since publish" status indicator, version increments, and one-click republishing directly from the Form Studio, the Forms list, and the Event Batch tab.
 
 ## Phase 3 — JotForm import and removal
 
@@ -42,11 +45,13 @@ Goal: the same level of customization staff used in JotForm, scoped to what the 
 - Remove the `functions/` JotForm code, the `fx` wrapper, the JotForm settings panel, and the `provider: 'jotform'` branch once no live batch uses JotForm.
 - Old JotForm orders stay in Firestore as they are (`source: 'jotform'`).
 
-## Phase 4 — Blaze: Storage and uploads
+## Phase 4 — Blaze: Storage and uploads (Implemented)
 
-- Enable Cloud Storage. Migrate `media` documents to Storage objects; keep the `media` document as metadata with a download URL. The public form snapshot then references URLs instead of inline data, lifting the per-form image budget.
-- Payment proof upload on the customer form (the live JotForm had this). Storage rules allow unauthenticated or anonymous create into `submissions/{id}/` with size and type limits; staff read. The order gains `paymentProofUrl`, already present in the type.
-- Larger images for the header and products.
+- **Cloud Storage enabled.** `media` uploads are saved as Storage objects under `media/{id}`; `media` documents store metadata with a download URL. Public form snapshots reference URLs instead of inline base64 data, eliminating the per-form image budget constraint.
+- **Media migration tool:** Settings now includes a status panel and one-click migrator to convert any legacy inline base64 images into Cloud Storage objects and update Firestore documents.
+- **Payment proof upload on customer form:** Storage rules allow authenticated/anonymous customers to upload receipts (images/PDF up to 10 MB) directly to `submissions/{id}/`. Staff can view the receipt link in the order modal.
+- **Higher resolution images:** Thumbnail size cap raised to 480 px and header image size cap to 1600 px for crisp retina displays.
+- **Storage security rules:** Deployed via `storage.rules` with cross-service Firestore staff verification.
 
 ## Phase 5 — Blaze: invoices and email
 
