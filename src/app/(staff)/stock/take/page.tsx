@@ -10,12 +10,13 @@ import { movementRepo } from '@/lib/repo';
 import { onHandByKey } from '@/lib/compute';
 import { variantKey, variantsOf } from '@/lib/keys';
 import Button from '@/components/ui/Button';
-import { Input } from '@/components/ui/Field';
-import { PageHeader, Panel, TableWrap } from '@/components/ui/Bits';
+import { Input, Select } from '@/components/ui/Field';
+import { Empty, PageHeader, Panel, TableWrap } from '@/components/ui/Bits';
 import { Confirm } from '@/components/ui/Dialog';
+import { titleCase } from '@/lib/format';
 
 export default function StockTakePage() {
-  const { items, movements, staffName } = useData();
+  const { items, movements, staff, settings, staffName } = useData();
   const { isMine } = usePrefs();
   const { me } = useAuth();
   const { run } = useToast();
@@ -24,21 +25,62 @@ export default function StockTakePage() {
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // Search & Filter states
+  const [search, setSearch] = useState('');
+  const [managerFilter, setManagerFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+
   const onHand = useMemo(() => onHandByKey(movements), [movements]);
   const isOpening = movements.length === 0;
 
-  const rows = useMemo(() => {
-    const out: { key: string; item: string; variant: string; manager: string; onHand: number }[] = [];
+  const allCategories = useMemo(() => {
+    const s = new Set<string>();
+    items.forEach((i) => { if (i.category) s.add(i.category); });
+    return [...s].sort();
+  }, [items]);
+
+  const rawRows = useMemo(() => {
+    const out: { key: string; itemId: string; item: string; variant: string; manager: string; onHand: number }[] = [];
     for (const item of items) {
       if (item.kind !== 'product' || !item.active || !isMine(item)) continue;
       for (const v of variantsOf(item)) {
         if (!v.active) continue;
         const key = variantKey(item.id, v.id);
-        out.push({ key, item: item.name, variant: v.name, manager: staffName(item.managerId), onHand: onHand.get(key) ?? 0 });
+        out.push({ key, itemId: item.id, item: item.name, variant: v.name, manager: staffName(item.managerId), onHand: onHand.get(key) ?? 0 });
       }
     }
     return out;
   }, [items, onHand, isMine, staffName]);
+
+  const rows = useMemo(() => {
+    return rawRows.filter((r) => {
+      const it = items.find((i) => i.id === r.itemId);
+      if (managerFilter && it?.managerId !== managerFilter) return false;
+      if (typeFilter && it?.type !== typeFilter) return false;
+      if (categoryFilter && it?.category !== categoryFilter) return false;
+
+      if (search.trim()) {
+        const q = search.toLowerCase();
+        const matchItem = r.item.toLowerCase().includes(q);
+        const matchVar = r.variant.toLowerCase().includes(q);
+        const matchMgr = r.manager.toLowerCase().includes(q);
+        const matchCat = (it?.category || '').toLowerCase().includes(q);
+        const matchSku = (it?.sku || '').toLowerCase().includes(q);
+        if (!matchItem && !matchVar && !matchMgr && !matchCat && !matchSku) return false;
+      }
+      return true;
+    });
+  }, [rawRows, managerFilter, typeFilter, categoryFilter, search, items]);
+
+  const hasActiveFilters = Boolean(search || managerFilter || typeFilter || categoryFilter);
+
+  const resetFilters = () => {
+    setSearch('');
+    setManagerFilter('');
+    setTypeFilter('');
+    setCategoryFilter('');
+  };
 
   const changes = rows.flatMap((r) => {
     const t = (counts[r.key] ?? '').trim();
@@ -66,7 +108,45 @@ export default function StockTakePage() {
       <PageHeader title={isOpening ? 'Opening stock' : 'Stock take'} actions={<><Button href="/stock/">Cancel</Button><Button variant="primary" disabled={changes.length === 0} onClick={() => setConfirm(true)}>Review {changes.length} changes</Button></>}>
         {isOpening ? 'Enter the current count for every variant. This becomes the opening balance.' : 'Enter the physical count. Rows left blank are skipped. Only differences are posted.'}
       </PageHeader>
-      {rows.length === 0 ? <Panel>No active variants. Add items to the catalogue first.</Panel> : (
+      {/* Search & Filter Toolbar */}
+      <div className="mb-4 flex flex-wrap lg:flex-nowrap items-center gap-2 bg-white/95 p-2 rounded-xl border border-line shadow-xs">
+        <Input
+          placeholder="Search item, variant, SKU, manager, category…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="flex-1 min-w-[200px]"
+        />
+        <Select small value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="w-auto min-w-[130px]">
+          <option value="">All Types</option>
+          {settings.itemTypes.map((t) => <option key={t} value={t}>{titleCase(t)}</option>)}
+        </Select>
+        {allCategories.length > 0 && (
+          <Select small value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="w-auto min-w-[130px]">
+            <option value="">All Categories</option>
+            {allCategories.map((c) => <option key={c} value={c}>{c}</option>)}
+          </Select>
+        )}
+        <Select small value={managerFilter} onChange={(e) => setManagerFilter(e.target.value)} className="w-auto min-w-[140px]">
+          <option value="">All Managers</option>
+          {staff.map((s) => <option key={s.id} value={s.id}>{s.displayName}</option>)}
+        </Select>
+        {hasActiveFilters && (
+          <Button size="sm" variant="quiet" onClick={resetFilters}>
+            Reset
+          </Button>
+        )}
+      </div>
+
+      {rawRows.length === 0 ? (
+        <Panel>No active variants. Add items to the catalogue first.</Panel>
+      ) : rows.length === 0 ? (
+        <Empty
+          title="No matching items"
+          action={<Button size="sm" onClick={resetFilters}>Clear filters</Button>}
+        >
+          Try broadening your search or resetting active filters.
+        </Empty>
+      ) : (
         <TableWrap>
           <thead><tr><th>Item</th><th>Variant</th><th>Manager</th><th className="num">On hand</th><th className="num">Counted</th><th className="num">Difference</th></tr></thead>
           <tbody>

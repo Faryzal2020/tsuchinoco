@@ -58,6 +58,12 @@ service cloud.firestore {
       allow read, update, delete: if isStaff();
     }
 
+    // ---- Logs: append-only immutable audit trail ----
+    match /logs/{id} {
+      allow read, create: if isStaff();
+      allow update, delete: if false;
+    }
+
     match /{document=**} {
       allow read, write: if isStaff();
     }

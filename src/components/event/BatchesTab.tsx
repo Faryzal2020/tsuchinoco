@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { useAuth } from '@/lib/auth';
+import { usePrefs } from '@/lib/prefs';
 import { useData } from '@/lib/data';
 import { useToast } from '@/components/ui/Toast';
 import { batchRepo, formRepo } from '@/lib/repo';
@@ -49,6 +50,7 @@ export default function BatchesTab({ event, batches, orders }: TabProps) {
 
 function BatchCard({ event, batch: b, batches, orderCount }: { event: TabProps['event']; batch: Batch; batches: Batch[]; orderCount: number }) {
   const { me } = useAuth();
+  const { allowDelete } = usePrefs();
   const { items, itemsById, settings, formsById, publicFormsById } = useData();
   const { run, toast } = useToast();
   const [editOffering, setEditOffering] = useState(false);
@@ -108,7 +110,17 @@ function BatchCard({ event, batch: b, batches, orderCount }: { event: TabProps['
           {b.status === 'open' && <Button variant="accent" size="sm" onClick={() => setConfirmClose(true)} busy={busy === 'closed'}>Close batch</Button>}
           {b.status === 'closed' && <Button size="sm" onClick={() => setStatus('fulfilled')} busy={busy === 'fulfilled'}>Mark fulfilled</Button>}
           {b.status === 'closed' && <Button size="sm" variant="quiet" onClick={() => setStatus('open')} busy={busy === 'open'} disabled={otherOpen}>Reopen</Button>}
-          {orderCount === 0 && !legacy && <Button size="sm" variant="danger" onClick={() => setConfirmDelete(true)}>Delete</Button>}
+          {orderCount === 0 && !legacy && (
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={!allowDelete}
+              title={!allowDelete ? 'Deletions disabled in Settings' : undefined}
+              onClick={() => setConfirmDelete(true)}
+            >
+              Delete
+            </Button>
+          )}
         </div>
       </div>
 

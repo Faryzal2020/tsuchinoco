@@ -10,6 +10,7 @@ import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { db, functions, storage } from '@/lib/firebase';
 import { dataUrlToBlob } from '@/lib/media';
 import { COL, settingsRepo, staffRepo } from '@/lib/repo';
+import { usePrefs } from '@/lib/prefs';
 import type { Media } from '@/types';
 import Button from '@/components/ui/Button';
 import { Checkbox, Field, Input } from '@/components/ui/Field';
@@ -18,7 +19,8 @@ import { PageHeader, Panel, Pill, TableWrap } from '@/components/ui/Bits';
 export default function SettingsPage() {
   const { staff, settings, items } = useData();
   const { me } = useAuth();
-  const { run, error } = useToast();
+  const { run, error, toast } = useToast();
+  const { allowDelete, setAllowDelete } = usePrefs();
 
   // Staff
   const [email, setEmail] = useState('');
@@ -107,6 +109,30 @@ export default function SettingsPage() {
               <Button onClick={testJotform} busy={jf.state === 'busy'}>Test connection</Button>
               {jf.state === 'ok' && <Pill tone="green">{jf.text}</Pill>}
               {jf.state === 'fail' && <Pill tone="red">{jf.text}</Pill>}
+            </div>
+          </Panel>
+
+          <Panel>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="font-bold">Deletion Safety Controls</h2>
+              {allowDelete ? (
+                <Pill tone="yellow">Deletions Enabled</Pill>
+              ) : (
+                <Pill tone="green">Protected (Delete Buttons Disabled)</Pill>
+              )}
+            </div>
+            <p className="hint mb-3">
+              Personal safety preference bound to your browser user session. When turned off, all delete buttons (delete item, bulk delete, clear catalogue, delete batch) will be greyed out across all pages to prevent accidental data loss.
+            </p>
+            <div className="flex items-center gap-3">
+              <Checkbox
+                label="Enable delete and clear actions"
+                checked={allowDelete}
+                onChange={(e) => {
+                  setAllowDelete(e.target.checked);
+                  toast(e.target.checked ? 'Delete actions enabled' : 'Delete actions locked and disabled');
+                }}
+              />
             </div>
           </Panel>
 

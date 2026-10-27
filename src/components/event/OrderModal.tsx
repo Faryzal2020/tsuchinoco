@@ -90,9 +90,25 @@ export default function OrderModal({ order: o, event, onClose }: { order: Order 
           <h3 className="font-bold mt-4 mb-1">Lines</h3>
           <table className="w-full text-sm">
             <tbody>
-              {o.rawLines.map((l, i) => { const lb = labelOf(l.itemId, l.variantId ?? 'default'); return (
-                <tr key={i} className="border-t border-line"><td className="py-1">{l.qty} × {lb.item}{lb.variant && ` · ${lb.variant}`}</td><td className="py-1 text-right tabular-nums">{formatMoney(l.lineTotal, settings.currency)}</td></tr>
-              ); })}
+              {o.rawLines.map((l, i) => {
+                const lb = labelOf(l.itemId, l.variantId ?? 'default');
+                return (
+                  <tr key={i} className="border-t border-line">
+                    <td className="py-1">
+                      <div>{l.qty} × {lb.item}{lb.variant && ` · ${lb.variant}`}</div>
+                      {l.bundleSelections && Object.keys(l.bundleSelections).length > 0 && (
+                        <div className="text-[11px] text-purple-800 pl-2 mt-0.5 space-x-2">
+                          {Object.entries(l.bundleSelections).map(([compItemId, vId]) => {
+                            const compLb = labelOf(compItemId, vId);
+                            return <span key={compItemId}>• {compLb.item}: <b className="font-semibold">{compLb.variant}</b></span>;
+                          })}
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-1 text-right tabular-nums">{formatMoney(l.lineTotal, settings.currency)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           {o.lines.some((l) => l.fromBundleItemId) && (
