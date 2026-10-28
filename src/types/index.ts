@@ -400,10 +400,23 @@ export interface Counter {
   next: number;
 }
 
+export interface EmailTemplate {
+  id: string;
+  name: string;
+  subject: string;
+  html: string;
+  updatedAt?: number;
+}
+
 export interface Settings {
   currency: string;
   itemTypes: string[];
   pickupDeadlineDays: number;
+  resendApiKey?: string;
+  resendFromEmail?: string;
+  resendFromName?: string;
+  resendReplyTo?: string;
+  emailTemplates?: EmailTemplate[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -431,7 +444,8 @@ export type LogAction =
   | 'bulk_delete'
   | 'clear'
   | 'publish'
-  | 'status_change';
+  | 'status_change'
+  | 'email_broadcast';
 
 export type LogEntityType =
   | 'item'
@@ -443,7 +457,21 @@ export type LogEntityType =
   | 'staff'
   | 'settings'
   | 'movement'
-  | 'wrapup';
+  | 'wrapup'
+  | 'email';
+
+export interface EmailRecipient {
+  id?: string;
+  email: string;
+  name?: string;
+  batchId?: string;
+  batchName?: string;
+  orderId?: string;
+  transactionId?: string;
+  status?: string;
+  fulfilment?: string;
+  source: 'batch' | 'custom';
+}
 
 export interface FieldChange {
   field: string;

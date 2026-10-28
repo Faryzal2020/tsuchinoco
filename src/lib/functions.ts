@@ -9,9 +9,39 @@ const call = <Req, Res>(name: string) => async (data: Req): Promise<Res> => {
 };
 
 export const fx = {
-  generateForm: call<{ batchId: string }, { formId: string; url: string }>('generateForm'),
-  syncForm: call<{ batchId: string }, { ok: true; fields: number }>('syncForm'),
-  setFormStatus: call<{ batchId: string; enabled: boolean }, { ok: true }>('setFormStatus'),
-  reimportBatch: call<{ batchId: string }, { imported: number; updated: number; skipped: number }>('reimportBatch'),
-  jotformStatus: call<Record<string, never>, { ok: boolean; username?: string; message?: string }>('jotformStatus'),
+  // Legacy JotForm callables (disabled in functions backend)
+  generateForm: async (_data: { batchId: string }): Promise<{ formId: string; url: string }> => {
+    throw new Error('JotForm functions have been disabled.');
+  },
+  syncForm: async (_data: { batchId: string }): Promise<{ ok: true; fields: number }> => {
+    throw new Error('JotForm functions have been disabled.');
+  },
+  setFormStatus: async (_data: { batchId: string; enabled: boolean }): Promise<{ ok: true }> => {
+    throw new Error('JotForm functions have been disabled.');
+  },
+  reimportBatch: async (_data: { batchId: string }): Promise<{ imported: number; updated: number; skipped: number }> => {
+    throw new Error('JotForm functions have been disabled.');
+  },
+  jotformStatus: async (): Promise<{ ok: boolean; username?: string; message?: string }> => {
+    return { ok: false, message: 'JotForm functions have been disabled.' };
+  },
+
+  // Active email broadcast callable
+  sendBroadcastEmail: call<
+    {
+      recipients: { email: string; name?: string; variables?: Record<string, string> }[];
+      subject: string;
+      html: string;
+      from: string;
+      replyTo?: string;
+      apiKey?: string;
+    },
+    {
+      ok: true;
+      total: number;
+      sentCount: number;
+      failedCount: number;
+      results: { email: string; success: boolean; id?: string; error?: string }[];
+    }
+  >('sendBroadcastEmail'),
 };
