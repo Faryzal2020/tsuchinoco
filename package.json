@@ -2,6 +2,9 @@
   "name": "tsuchinoco-ops",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
@@ -20,6 +23,7 @@
     "@tiptap/starter-kit": "^3.32.0",
     "clsx": "^2.1.1",
     "firebase": "^13.1.0",
+    "firebase-functions": "^7.4.0",
     "lucide-react": "^0.541.0",
     "next": "^16.4.3",
     "papaparse": "^5.5.2",
@@ -31,7 +35,7 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^22",
     "@types/papaparse": "^5.3.15",
     "@types/react": "^19",
     "@types/react-dom": "^19",

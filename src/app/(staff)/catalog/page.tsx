@@ -219,26 +219,39 @@ function CatalogList() {
       const maxOts = Math.max(...otsPrices);
       const hasDistinctOts = minOts !== minPo || maxOts !== maxPo;
 
+      const otsText = minOts === maxOts ? formatMoney(minOts, settings.currency) : `${minOts.toLocaleString()} – ${maxOts.toLocaleString()}`;
+
       return (
-        <div>
-          <div>{poText}</div>
+        <div className="leading-tight">
+          <div className="truncate font-medium text-xs sm:text-sm" title={poText}>{poText}</div>
           {hasDistinctOts && (
-            <div className="text-xs text-ink-2">
-              OTS: {minOts === maxOts ? formatMoney(minOts, settings.currency) : `${minOts.toLocaleString()} – ${maxOts.toLocaleString()}`}
+            <div className="text-[11px] sm:text-xs text-ink-2 truncate" title={`OTS: ${otsText}`}>
+              OTS: {otsText}
             </div>
           )}
-          {item.priceJpy && <div className="text-xs text-blue-600 font-mono">¥{item.priceJpy.toLocaleString()}</div>}
+          {item.priceJpy && (
+            <div className="text-[11px] sm:text-xs text-blue-600 font-mono truncate" title={`¥${item.priceJpy.toLocaleString()}`}>
+              ¥{item.priceJpy.toLocaleString()}
+            </div>
+          )}
         </div>
       );
     }
 
+    const poText = formatMoney(item.price, settings.currency);
     return (
-      <div>
-        <div>{formatMoney(item.price, settings.currency)}</div>
+      <div className="leading-tight">
+        <div className="truncate font-medium text-xs sm:text-sm" title={poText}>{poText}</div>
         {item.otsPrice && item.otsPrice !== item.price && (
-          <div className="text-xs text-ink-2">OTS: {formatMoney(item.otsPrice, settings.currency)}</div>
+          <div className="text-[11px] sm:text-xs text-ink-2 truncate" title={`OTS: ${formatMoney(item.otsPrice, settings.currency)}`}>
+            OTS: {formatMoney(item.otsPrice, settings.currency)}
+          </div>
         )}
-        {item.priceJpy && <div className="text-xs text-blue-600 font-mono">¥{item.priceJpy.toLocaleString()}</div>}
+        {item.priceJpy && (
+          <div className="text-[11px] sm:text-xs text-blue-600 font-mono truncate" title={`¥${item.priceJpy.toLocaleString()}`}>
+            ¥{item.priceJpy.toLocaleString()}
+          </div>
+        )}
       </div>
     );
   };
@@ -441,10 +454,23 @@ function CatalogList() {
         </Empty>
       ) : (
         <div className="relative pb-20">
-          <TableWrap>
+          <TableWrap tableClassName="tbl-fixed table-fixed w-full">
+            <colgroup>
+              <col className="w-10" />
+              <col className="w-[10%]" />
+              <col className="w-[23%]" />
+              <col className="w-[10%]" />
+              <col className="w-[8%]" />
+              <col className="w-[11%]" />
+              <col className="w-[13%]" />
+              <col className="w-[7%]" />
+              <col className="w-[6%]" />
+              <col className="w-[7%]" />
+              <col className="w-14" />
+            </colgroup>
             <thead>
               <tr>
-                <th className="w-10">
+                <th className="w-10 text-center">
                   <input
                     type="checkbox"
                     checked={isAllSelected}
@@ -453,114 +479,114 @@ function CatalogList() {
                   />
                 </th>
                 <th
-                  className="cursor-pointer select-none hover:text-ink transition-colors"
+                  className="w-[10%] cursor-pointer select-none hover:text-ink transition-colors"
                   onClick={() => toggleSort('sku')}
                   title="Sort by SKU"
                 >
-                  <div className="inline-flex items-center gap-1">
-                    <span>SKU</span>
-                    <span className={`text-[10px] ${sortCol === 'sku' ? 'text-ink font-bold' : 'text-ink-2/30'}`}>
+                  <div className="inline-flex items-center gap-1 max-w-full">
+                    <span className="truncate">SKU</span>
+                    <span className={`text-[10px] shrink-0 ${sortCol === 'sku' ? 'text-ink font-bold' : 'text-ink-2/30'}`}>
                       {sortCol === 'sku' ? (sortAsc ? '▲' : '▼') : '↕'}
                     </span>
                   </div>
                 </th>
                 <th
-                  className="cursor-pointer select-none hover:text-ink transition-colors"
+                  className="w-[23%] cursor-pointer select-none hover:text-ink transition-colors"
                   onClick={() => toggleSort('name')}
                   title="Sort by Name"
                 >
-                  <div className="inline-flex items-center gap-1">
-                    <span>Name</span>
-                    <span className={`text-[10px] ${sortCol === 'name' ? 'text-ink font-bold' : 'text-ink-2/30'}`}>
+                  <div className="inline-flex items-center gap-1 max-w-full">
+                    <span className="truncate">Name</span>
+                    <span className={`text-[10px] shrink-0 ${sortCol === 'name' ? 'text-ink font-bold' : 'text-ink-2/30'}`}>
                       {sortCol === 'name' ? (sortAsc ? '▲' : '▼') : '↕'}
                     </span>
                   </div>
                 </th>
                 <th
-                  className="cursor-pointer select-none hover:text-ink transition-colors"
+                  className="w-[10%] cursor-pointer select-none hover:text-ink transition-colors"
                   onClick={() => toggleSort('category')}
                   title="Sort by Category"
                 >
-                  <div className="inline-flex items-center gap-1">
-                    <span>Category</span>
-                    <span className={`text-[10px] ${sortCol === 'category' ? 'text-ink font-bold' : 'text-ink-2/30'}`}>
+                  <div className="inline-flex items-center gap-1 max-w-full">
+                    <span className="truncate">Category</span>
+                    <span className={`text-[10px] shrink-0 ${sortCol === 'category' ? 'text-ink font-bold' : 'text-ink-2/30'}`}>
                       {sortCol === 'category' ? (sortAsc ? '▲' : '▼') : '↕'}
                     </span>
                   </div>
                 </th>
                 <th
-                  className="cursor-pointer select-none hover:text-ink transition-colors"
+                  className="w-[8%] cursor-pointer select-none hover:text-ink transition-colors"
                   onClick={() => toggleSort('type')}
                   title="Sort by Type"
                 >
-                  <div className="inline-flex items-center gap-1">
-                    <span>Type</span>
-                    <span className={`text-[10px] ${sortCol === 'type' ? 'text-ink font-bold' : 'text-ink-2/30'}`}>
+                  <div className="inline-flex items-center gap-1 max-w-full">
+                    <span className="truncate">Type</span>
+                    <span className={`text-[10px] shrink-0 ${sortCol === 'type' ? 'text-ink font-bold' : 'text-ink-2/30'}`}>
                       {sortCol === 'type' ? (sortAsc ? '▲' : '▼') : '↕'}
                     </span>
                   </div>
                 </th>
                 <th
-                  className="cursor-pointer select-none hover:text-ink transition-colors"
+                  className="w-[11%] cursor-pointer select-none hover:text-ink transition-colors"
                   onClick={() => toggleSort('manager')}
                   title="Sort by Manager"
                 >
-                  <div className="inline-flex items-center gap-1">
-                    <span>Manager</span>
-                    <span className={`text-[10px] ${sortCol === 'manager' ? 'text-ink font-bold' : 'text-ink-2/30'}`}>
+                  <div className="inline-flex items-center gap-1 max-w-full">
+                    <span className="truncate">Manager</span>
+                    <span className={`text-[10px] shrink-0 ${sortCol === 'manager' ? 'text-ink font-bold' : 'text-ink-2/30'}`}>
                       {sortCol === 'manager' ? (sortAsc ? '▲' : '▼') : '↕'}
                     </span>
                   </div>
                 </th>
                 <th
-                  className="num cursor-pointer select-none hover:text-ink transition-colors"
+                  className="w-[13%] num cursor-pointer select-none hover:text-ink transition-colors"
                   onClick={() => toggleSort('price')}
                   title="Sort by Price"
                 >
-                  <div className="inline-flex items-center gap-1 justify-end">
-                    <span>Price (PO / OTS)</span>
-                    <span className={`text-[10px] ${sortCol === 'price' ? 'text-ink font-bold' : 'text-ink-2/30'}`}>
+                  <div className="inline-flex items-center gap-1 justify-end max-w-full">
+                    <span className="truncate">Price (PO/OTS)</span>
+                    <span className={`text-[10px] shrink-0 ${sortCol === 'price' ? 'text-ink font-bold' : 'text-ink-2/30'}`}>
                       {sortCol === 'price' ? (sortAsc ? '▲' : '▼') : '↕'}
                     </span>
                   </div>
                 </th>
                 <th
-                  className="num cursor-pointer select-none hover:text-ink transition-colors"
+                  className="w-[7%] num cursor-pointer select-none hover:text-ink transition-colors"
                   onClick={() => toggleSort('variants')}
                   title="Sort by Variants count"
                 >
-                  <div className="inline-flex items-center gap-1 justify-end">
-                    <span>Variants</span>
-                    <span className={`text-[10px] ${sortCol === 'variants' ? 'text-ink font-bold' : 'text-ink-2/30'}`}>
+                  <div className="inline-flex items-center gap-1 justify-end max-w-full">
+                    <span className="truncate">Vars</span>
+                    <span className={`text-[10px] shrink-0 ${sortCol === 'variants' ? 'text-ink font-bold' : 'text-ink-2/30'}`}>
                       {sortCol === 'variants' ? (sortAsc ? '▲' : '▼') : '↕'}
                     </span>
                   </div>
                 </th>
                 <th
-                  className="num cursor-pointer select-none hover:text-ink transition-colors"
+                  className="w-[6%] num cursor-pointer select-none hover:text-ink transition-colors"
                   onClick={() => toggleSort('onHand')}
                   title="Sort by On Hand stock"
                 >
-                  <div className="inline-flex items-center gap-1 justify-end">
-                    <span>On hand</span>
-                    <span className={`text-[10px] ${sortCol === 'onHand' ? 'text-ink font-bold' : 'text-ink-2/30'}`}>
+                  <div className="inline-flex items-center gap-1 justify-end max-w-full">
+                    <span className="truncate">Stock</span>
+                    <span className={`text-[10px] shrink-0 ${sortCol === 'onHand' ? 'text-ink font-bold' : 'text-ink-2/30'}`}>
                       {sortCol === 'onHand' ? (sortAsc ? '▲' : '▼') : '↕'}
                     </span>
                   </div>
                 </th>
                 <th
-                  className="cursor-pointer select-none hover:text-ink transition-colors"
+                  className="w-[7%] cursor-pointer select-none hover:text-ink transition-colors"
                   onClick={() => toggleSort('status')}
                   title="Sort by Status"
                 >
-                  <div className="inline-flex items-center gap-1">
-                    <span>Status</span>
-                    <span className={`text-[10px] ${sortCol === 'status' ? 'text-ink font-bold' : 'text-ink-2/30'}`}>
+                  <div className="inline-flex items-center gap-1 max-w-full">
+                    <span className="truncate">Status</span>
+                    <span className={`text-[10px] shrink-0 ${sortCol === 'status' ? 'text-ink font-bold' : 'text-ink-2/30'}`}>
                       {sortCol === 'status' ? (sortAsc ? '▲' : '▼') : '↕'}
                     </span>
                   </div>
                 </th>
-                <th className="w-16 text-right">Actions</th>
+                <th className="w-14 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -578,7 +604,7 @@ function CatalogList() {
                         if (hasVariants) toggleExpand(i.id);
                       }}
                     >
-                      <td className="w-10" onClick={(e) => e.stopPropagation()}>
+                      <td className="w-10 text-center" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={isSelected}
@@ -586,35 +612,61 @@ function CatalogList() {
                           className="cursor-pointer rounded border-line"
                         />
                       </td>
-                      <td className="mono text-xs text-ink-2">{i.sku || '—'}</td>
-                      <td>
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold">{i.name}</span>
-                          {i.kind === 'bundle' && <Pill tone="blue">Bundle</Pill>}
+                      <td className="mono text-xs text-ink-2">
+                        <div className="truncate" title={i.sku || '—'}>
+                          {i.sku || '—'}
                         </div>
                       </td>
-                      <td>{i.category ? <CategoryPill category={i.category} /> : <span className="text-ink-2">—</span>}</td>
-                      <td>{titleCase(i.type)}</td>
-                      <td>
-                        {i.managerId ? (
-                          staffName(i.managerId)
-                        ) : i.managerName ? (
-                          <Pill tone="yellow">Unassigned ({i.managerName})</Pill>
+                      <td className="min-w-0">
+                        <div className="flex items-center gap-1.5 min-w-0" title={i.name}>
+                          <span className="font-semibold truncate">{i.name}</span>
+                          {i.kind === 'bundle' && (
+                            <Pill tone="blue" className="shrink-0 text-[10px] h-4.5 px-1.5 leading-none">
+                              Bundle
+                            </Pill>
+                          )}
+                        </div>
+                      </td>
+                      <td className="min-w-0">
+                        {i.category ? (
+                          <div className="truncate" title={i.category}>
+                            <CategoryPill category={i.category} className="max-w-full truncate inline-block text-left" />
+                          </div>
                         ) : (
                           <span className="text-ink-2">—</span>
                         )}
                       </td>
-                      <td className="num">{priceDisplay(i)}</td>
-                      <td className="num">
+                      <td>
+                        <div className="truncate text-xs sm:text-sm" title={titleCase(i.type)}>
+                          {titleCase(i.type)}
+                        </div>
+                      </td>
+                      <td className="min-w-0">
+                        {i.managerId ? (
+                          <div className="truncate text-xs sm:text-sm" title={staffName(i.managerId)}>
+                            {staffName(i.managerId)}
+                          </div>
+                        ) : i.managerName ? (
+                          <div className="truncate" title={`Unassigned (${i.managerName})`}>
+                            <Pill tone="yellow" className="max-w-full truncate inline-block text-left">
+                              Unassigned ({i.managerName})
+                            </Pill>
+                          </div>
+                        ) : (
+                          <span className="text-ink-2">—</span>
+                        )}
+                      </td>
+                      <td className="num overflow-hidden">{priceDisplay(i)}</td>
+                      <td className="num text-xs sm:text-sm truncate">
                         {i.kind === 'bundle'
                           ? `${i.components.length} parts`
                           : hasVariants
                           ? `${i.variants.length} vars`
                           : '—'}
                       </td>
-                      <td className="num font-semibold">{stock === null ? '—' : stock}</td>
+                      <td className="num font-semibold text-xs sm:text-sm truncate">{stock === null ? '—' : stock}</td>
                       <td>{i.active ? <Pill tone="green">Active</Pill> : <Pill tone="neutral">Inactive</Pill>}</td>
-                      <td className="text-right" onClick={(e) => e.stopPropagation()}>
+                      <td className="text-right w-14" onClick={(e) => e.stopPropagation()}>
                         <button
                           type="button"
                           onClick={() => setEditingItemId(i.id)}
@@ -633,22 +685,32 @@ function CatalogList() {
                     {/* Expandable nested variant sub-rows */}
                     {hasVariants && isExpanded && (
                       <tr className="bg-surface-2/30 border-b border-line">
-                        <td colSpan={11} className="p-0 pl-12 pr-4 py-2">
-                          <div className="rounded border border-line bg-white/80 p-2.5 my-1 text-sm">
+                        <td colSpan={11} className="p-0 pl-10 pr-3 py-2">
+                          <div className="rounded border border-line bg-white/80 p-2.5 my-1 text-sm overflow-x-auto">
                             <div className="text-xs font-bold text-ink-2 uppercase tracking-wider mb-2">
                               {i.name} — {i.variants.length} Variants
                             </div>
-                            <table className="w-full text-xs">
+                            <table className="w-full text-xs table-fixed">
+                              <colgroup>
+                                <col className="w-[28%]" />
+                                <col className="w-[16%]" />
+                                <col className="w-[13%]" />
+                                <col className="w-[13%]" />
+                                <col className="w-[10%]" />
+                                <col className="w-[7%]" />
+                                <col className="w-[7%]" />
+                                <col className="w-14" />
+                              </colgroup>
                               <thead>
                                 <tr className="border-b border-line text-ink-2 text-left">
-                                  <th className="py-1">Variant Name</th>
-                                  <th className="py-1">Variant SKU</th>
-                                  <th className="py-1 num">PO Price</th>
-                                  <th className="py-1 num">OTS Price</th>
-                                  <th className="py-1 num">JPY Price</th>
-                                  <th className="py-1 num">On Hand</th>
-                                  <th className="py-1">Status</th>
-                                  <th className="py-1 text-right w-16">Action</th>
+                                  <th className="py-1 pr-2 truncate">Variant Name</th>
+                                  <th className="py-1 pr-2 truncate">Variant SKU</th>
+                                  <th className="py-1 pr-2 num">PO Price</th>
+                                  <th className="py-1 pr-2 num">OTS Price</th>
+                                  <th className="py-1 pr-2 num">JPY Price</th>
+                                  <th className="py-1 pr-2 num">On Hand</th>
+                                  <th className="py-1 pr-2">Status</th>
+                                  <th className="py-1 text-right w-14">Action</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -662,26 +724,26 @@ function CatalogList() {
 
                                   return (
                                     <tr key={v.id} className="border-b border-line/40 last:border-0 hover:bg-surface-2/20">
-                                      <td className="py-1.5 font-medium">{v.name}</td>
-                                      <td className="py-1.5 mono text-ink-2">{v.sku || '—'}</td>
-                                      <td className="py-1.5 num">
+                                      <td className="py-1.5 pr-2 font-medium truncate" title={v.name}>{v.name}</td>
+                                      <td className="py-1.5 pr-2 mono text-ink-2 truncate" title={v.sku || '—'}>{v.sku || '—'}</td>
+                                      <td className="py-1.5 pr-2 num truncate">
                                         <span className={isPoOverridden ? 'font-bold text-blue-700' : ''}>
                                           {formatMoney(vPo, settings.currency)}
                                         </span>
                                       </td>
-                                      <td className="py-1.5 num">
+                                      <td className="py-1.5 pr-2 num truncate">
                                         <span className={isOtsOverridden ? 'font-bold text-purple-700' : ''}>
                                           {formatMoney(vOts, settings.currency)}
                                         </span>
                                       </td>
-                                      <td className="py-1.5 num mono text-blue-600">
+                                      <td className="py-1.5 pr-2 num mono text-blue-600 truncate">
                                         {vJpy ? `¥${vJpy.toLocaleString()}` : '—'}
                                       </td>
-                                      <td className="py-1.5 num font-semibold">{vStock}</td>
-                                      <td className="py-1.5">
+                                      <td className="py-1.5 pr-2 num font-semibold">{vStock}</td>
+                                      <td className="py-1.5 pr-2">
                                         {v.active ? <Pill tone="green">Active</Pill> : <Pill tone="neutral">Inactive</Pill>}
                                       </td>
-                                      <td className="py-1.5 text-right">
+                                      <td className="py-1.5 text-right w-14">
                                         <button
                                           type="button"
                                           onClick={(e) => {
