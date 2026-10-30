@@ -24,7 +24,7 @@ Tsuchinoco runs entirely on the **Firebase Blaze plan** (pay-as-you-go with gene
 
 ## Prerequisites
 
-- **Node.js 20 or newer** and npm.
+- **Node.js 22 or newer** and npm.
 - **Firebase CLI**: `npm install -g firebase-tools`, followed by `firebase login`.
 - **Java 11 or newer** (only required if running local Firebase emulators).
 - A **Google account** that will become the primary staff administrator.

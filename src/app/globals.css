@@ -195,6 +195,17 @@ h1, h2, h3 { text-wrap: balance; letter-spacing: -0.01em; }
   top: 0;
 }
 .tbl td { padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.tbl.tbl-fixed,
+.tbl.table-fixed {
+  table-layout: fixed;
+  width: 100%;
+}
+.tbl.tbl-fixed th,
+.tbl.tbl-fixed td,
+.tbl.table-fixed th,
+.tbl.table-fixed td {
+  padding: 8px 10px;
+}
 .tbl tbody tr:last-child td { border-bottom: none; }
 .tbl tbody tr:hover td { background: var(--cream); }
 .tbl .num, .tbl th.num { text-align: right; font-variant-numeric: tabular-nums; }

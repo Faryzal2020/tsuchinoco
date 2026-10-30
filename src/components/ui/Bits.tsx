@@ -39,7 +39,10 @@ export function getCategoryColor(category: string): string {
 export function CategoryPill({ category, className }: { category?: string; className?: string }) {
   if (!category) return <span className="text-ink-2">—</span>;
   return (
-    <span className={cn('pill border font-medium text-xs', getCategoryColor(category), className)}>
+    <span
+      title={category}
+      className={cn('pill border font-medium text-xs max-w-full truncate inline-block align-middle', getCategoryColor(category), className)}
+    >
       {category}
     </span>
   );
@@ -124,8 +127,20 @@ export function Loading({ label = 'Loading…' }: { label?: string }) {
   return <div className="py-16 text-center text-sm text-muted">{label}</div>;
 }
 
-export function TableWrap({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={cn('tbl-wrap', className)}><table className="tbl">{children}</table></div>;
+export function TableWrap({
+  children,
+  className,
+  tableClassName,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  tableClassName?: string;
+}) {
+  return (
+    <div className={cn('tbl-wrap', className)}>
+      <table className={cn('tbl', tableClassName)}>{children}</table>
+    </div>
+  );
 }
 
 export function Kv({ k, v }: { k: string; v: React.ReactNode }) {
