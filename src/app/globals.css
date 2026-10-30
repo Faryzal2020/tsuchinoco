@@ -321,7 +321,9 @@ dialog.modal::backdrop { background: rgba(38, 36, 31, 0.35); }
   line-height: 1.5;
   padding: 20px 12px 80px;
 }
-.pf-inner { max-width: var(--pf-width); margin: 0 auto; display: grid; gap: 14px; }
+/* Layout switches (columns, card style) follow the form's own width, so the editor's phone preview matches a real phone.
+   The container is .pf-inner, not .pf, so the fixed floating cart is unaffected by layout containment. */
+.pf-inner { max-width: var(--pf-width); margin: 0 auto; display: grid; gap: 14px; container-type: inline-size; container-name: pf; }
 .pf-card { background: var(--pf-surface); border: 1px solid var(--pf-line); border-radius: var(--pf-radius); padding: 18px 18px; }
 .pf-header { padding: 0; overflow: hidden; }
 .pf-header img { display: block; width: 100%; max-height: 320px; object-fit: cover; }
@@ -332,6 +334,8 @@ dialog.modal::backdrop { background: rgba(38, 36, 31, 0.35); }
 .pf-section small { display: block; font-size: 13.5px; font-weight: 400; color: var(--pf-muted); }
 .pf-text p { margin: 0 0 8px; }
 .pf-text p:last-child { margin-bottom: 0; }
+.pf-link { color: var(--pf-accent); text-decoration: underline; text-underline-offset: 2px; font-weight: 600; overflow-wrap: anywhere; }
+.pf-link:hover { opacity: 0.8; }
 .pf-divider { border: 0; border-top: 1px solid var(--pf-line); margin: 4px 0; }
 .pf-image img { display: block; max-width: 100%; border-radius: calc(var(--pf-radius) - 4px); margin: 0 auto; }
 .pf-image.half img { max-width: 50%; }
@@ -360,29 +364,14 @@ dialog.modal::backdrop { background: rgba(38, 36, 31, 0.35); }
 .pf-choice label:has(input:checked) { border-color: var(--pf-accent); background: var(--pf-accent-soft); }
 .pf-choice input { accent-color: var(--pf-accent); width: 18px; height: 18px; }
 
-.pf-products { display: grid; gap: 10px; }
-.pf-products.pf-cols-1 { grid-template-columns: 1fr; }
-.pf-products.pf-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.pf-products.pf-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.pf-products.pf-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.pf-products.pf-cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-
-/* Fallback for generic .pf-products.grid */
-.pf-products.grid:not(.pf-cols-1):not(.pf-cols-2):not(.pf-cols-3):not(.pf-cols-4):not(.pf-cols-5) {
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-}
-
-@media (max-width: 1100px) {
-  .pf-products.pf-cols-5 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-}
-@media (max-width: 900px) {
-  .pf-products.pf-cols-4, .pf-products.pf-cols-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-@media (max-width: 640px) {
-  .pf-products.pf-cols-3, .pf-products.pf-cols-4, .pf-products.pf-cols-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-@media (max-width: 380px) {
-  .pf-products.pf-cols-2, .pf-products.pf-cols-3, .pf-products.pf-cols-4, .pf-products.pf-cols-5 { grid-template-columns: 1fr; }
+/* Column counts come from --pf-cols (desktop) and --pf-mcols (mobile) set inline per block.
+   .pf-stack-d / .pf-stack-m mark that the layout is a grid (thumbnail above text) at that size;
+   otherwise rows are list style (thumbnail at the left). */
+.pf-products { display: grid; gap: 10px; grid-template-columns: repeat(var(--pf-mcols, 2), minmax(0, 1fr)); }
+.pf-products.pf-mcols-3 { gap: 8px; }
+@container pf (min-width: 700px) {
+  .pf-products { grid-template-columns: repeat(var(--pf-cols, 3), minmax(0, 1fr)); gap: 10px; }
+  .pf-products.pf-cols-4, .pf-products.pf-cols-5 { gap: 8px; }
 }
 
 .pf-product { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; padding: 12px; border: 1px solid var(--pf-line); border-radius: calc(var(--pf-radius) - 2px); background: var(--pf-surface); align-items: start; position: relative; }
@@ -431,27 +420,55 @@ dialog.modal::backdrop { background: rgba(38, 36, 31, 0.35); }
   color: #ef4444;
   transform: scale(1.15);
 }
-.pf-products.grid .pf-product { grid-template-columns: 1fr; }
 .pf-thumb { width: 72px; height: 72px; border-radius: calc(var(--pf-radius) - 4px); object-fit: cover; background: var(--pf-accent-soft); flex: none; }
-.pf-products.grid .pf-thumb { width: 100%; height: auto; aspect-ratio: 1; }
 .pf-product-name { font-weight: 700; line-height: 1.3; }
-.pf-price { color: var(--pf-muted); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pf-price { color: var(--pf-price-color, var(--pf-muted)); font-family: var(--pf-price-font, inherit); font-weight: var(--pf-price-weight, 600); font-size: var(--pf-price-size, 1em); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pf-price.pf-price-row { font-size: calc(var(--pf-price-size, 1em) * 0.9); }
 .pf-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 8px; }
 .pf-row + .pf-row { border-top: 1px dashed var(--pf-line); margin-top: 8px; }
 .pf-row-name { min-width: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.pf-row-name small, .pf-row-name > .pf-price { flex-basis: 100%; color: var(--pf-muted); }
+.pf-row-name small, .pf-row-name > .pf-price { flex-basis: 100%; }
+.pf-row-name small:not(.pf-price) { color: var(--pf-muted); }
 .pf-variant-thumb { width: 36px; height: 36px; border-radius: 6px; object-fit: cover; flex: none; }
-/* Grid cards are narrow: stack name above the stepper. */
-.pf-products.grid .pf-row { flex-direction: column; align-items: stretch; }
-.pf-products.grid .pf-row-name { display: block; }
-.pf-products.grid .pf-stepper { justify-content: center; margin-top: 8px; }
-
-/* Compact sizing for dense 4 & 5 column grids */
-.pf-products.pf-cols-4, .pf-products.pf-cols-5 { gap: 8px; }
-.pf-products.pf-cols-4 .pf-product, .pf-products.pf-cols-5 .pf-product { padding: 10px; }
-.pf-products.pf-cols-4 .pf-product-name, .pf-products.pf-cols-5 .pf-product-name { font-size: 13.5px; }
-.pf-products.pf-cols-4 .pf-stepper button, .pf-products.pf-cols-5 .pf-stepper button { width: 32px; height: 32px; font-size: 16px; }
-.pf-products.pf-cols-4 .pf-stepper input, .pf-products.pf-cols-5 .pf-stepper input { width: 30px; font-size: 13px; }
+/* Stacked (grid) card style, mobile size. --pf-thumb-h is one column's width minus the card padding,
+   so with "fit thumbnail" a square image fills exactly one column and wider images make wider cards. */
+@container pf (max-width: 699.98px) {
+  .pf-products.pf-stack-m { --pf-thumb-h: calc((100cqw - (var(--pf-mcols, 2) - 1) * 10px) / var(--pf-mcols, 2) - 24px); }
+  .pf-products.pf-stack-m .pf-product { grid-template-columns: 1fr; }
+  .pf-products.pf-stack-m .pf-thumb { width: 100%; height: auto; aspect-ratio: 1; }
+  .pf-products.pf-stack-m .pf-row { flex-direction: column; align-items: stretch; }
+  .pf-products.pf-stack-m .pf-row-name { display: block; }
+  .pf-products.pf-stack-m .pf-row-name small { display: block; }
+  .pf-products.pf-stack-m .pf-stepper { justify-content: center; margin-top: 8px; }
+  .pf-products.pf-mcols-3 .pf-product { padding: 8px; }
+  .pf-products.pf-mcols-3 .pf-product-name { font-size: 13px; }
+  .pf-products.pf-mcols-3 .pf-stepper button { width: 30px; height: 30px; font-size: 15px; }
+  .pf-products.pf-mcols-3 .pf-stepper input { width: 26px; font-size: 13px; }
+  /* Fit thumbnail: the card's single grid column is sized by its content's min-content width, which the
+     image (fixed height, auto width) dominates, so the card is as wide as its picture and text wraps inside it. */
+  .pf-products.pf-fit.pf-stack-m { display: flex; flex-wrap: wrap; align-items: flex-start; }
+  .pf-products.pf-fit.pf-stack-m .pf-product { grid-template-columns: min-content; width: auto; max-width: 100%; }
+  .pf-products.pf-fit.pf-stack-m .pf-thumb { width: auto; max-width: calc(100cqw - 26px); height: var(--pf-thumb-h); aspect-ratio: auto; object-fit: contain; }
+}
+/* Stacked (grid) card style, desktop size */
+@container pf (min-width: 700px) {
+  .pf-products.pf-stack-d { --pf-thumb-h: calc((100cqw - (var(--pf-cols, 3) - 1) * 10px) / var(--pf-cols, 3) - 24px); }
+  .pf-products.pf-stack-d .pf-product { grid-template-columns: 1fr; }
+  .pf-products.pf-stack-d .pf-thumb { width: 100%; height: auto; aspect-ratio: 1; }
+  .pf-products.pf-stack-d .pf-row { flex-direction: column; align-items: stretch; }
+  .pf-products.pf-stack-d .pf-row-name { display: block; }
+  .pf-products.pf-stack-d .pf-row-name small { display: block; }
+  .pf-products.pf-stack-d .pf-stepper { justify-content: center; margin-top: 8px; }
+  .pf-products.pf-cols-4 .pf-product, .pf-products.pf-cols-5 .pf-product { padding: 10px; }
+  .pf-products.pf-cols-4 .pf-product-name, .pf-products.pf-cols-5 .pf-product-name { font-size: 13.5px; }
+  .pf-products.pf-cols-4 .pf-stepper button, .pf-products.pf-cols-5 .pf-stepper button { width: 32px; height: 32px; font-size: 16px; }
+  .pf-products.pf-cols-4 .pf-stepper input, .pf-products.pf-cols-5 .pf-stepper input { width: 30px; font-size: 13px; }
+  /* Fit thumbnail: the card's single grid column is sized by its content's min-content width, which the
+     image (fixed height, auto width) dominates, so the card is as wide as its picture and text wraps inside it. */
+  .pf-products.pf-fit.pf-stack-d { display: flex; flex-wrap: wrap; align-items: flex-start; }
+  .pf-products.pf-fit.pf-stack-d .pf-product { grid-template-columns: min-content; width: auto; max-width: 100%; }
+  .pf-products.pf-fit.pf-stack-d .pf-thumb { width: auto; max-width: calc(100cqw - 26px); height: var(--pf-thumb-h); aspect-ratio: auto; object-fit: contain; }
+}
 
 .pf-stepper { display: inline-flex; align-items: center; border: 1.5px solid var(--pf-line); border-radius: 999px; overflow: hidden; background: var(--pf-surface); flex: none; }
 .pf-stepper button { width: 38px; height: 38px; border: 0; background: transparent; color: inherit; font-size: 20px; font-weight: 700; cursor: pointer; line-height: 1; }

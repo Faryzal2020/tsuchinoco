@@ -7,6 +7,7 @@ import React, { useMemo, useState } from 'react';
 import type { Fulfilment, PublicBlock, PublicForm, PublicProductGroup, Submission } from '@/types';
 import { confirmationCode, labelOf, type FormLabelKey } from '@/lib/forms';
 import { formatMoney } from '@/lib/format';
+import { RichText } from './richText';
 import { ArrowDown, ChevronDown, ChevronUp, ShoppingCart, Trash2, XCircle } from 'lucide-react';
 
 type Snapshot = Omit<PublicForm, 'id'>;
@@ -16,14 +17,22 @@ const FONTS = {
   sans: 'var(--font-jakarta), "Segoe UI", Helvetica, Arial, sans-serif',
   serif: 'Georgia, "Times New Roman", serif',
   rounded: 'ui-rounded, "Hiragino Maru Gothic ProN", Quicksand, "Segoe UI", sans-serif',
+  mono: 'var(--font-mono), ui-monospace, "SF Mono", Menlo, Consolas, monospace',
 };
-const WIDTHS = { narrow: '520px', normal: '680px', wide: '860px', widescreen: '1240px' };
+// Desktop caps. Phones are narrower than any of these, so the width only matters on larger screens.
+const WIDTHS = { narrow: '780px', normal: '1020px', wide: '1290px', widescreen: '1860px' };
 const RADII = { sharp: '4px', soft: '12px', round: '20px' };
+const PRICE_WEIGHTS = { normal: '400', semibold: '600', bold: '700', black: '900' };
+const PRICE_SIZES = { sm: '0.875em', md: '1em', lg: '1.2em', xl: '1.45em' };
 
 export function themeStyle(theme: Snapshot['theme']): React.CSSProperties {
   return {
     '--pf-bg': theme.background, '--pf-surface': theme.surface, '--pf-accent': theme.accent, '--pf-text': theme.text,
     '--pf-font': FONTS[theme.font] ?? FONTS.sans, '--pf-width': WIDTHS[theme.width] ?? WIDTHS.widescreen, '--pf-radius': RADII[theme.radius] ?? RADII.soft,
+    '--pf-price-color': theme.priceColor || 'var(--pf-muted)',
+    '--pf-price-font': theme.priceFont && theme.priceFont !== 'inherit' ? (FONTS[theme.priceFont] ?? 'inherit') : 'inherit',
+    '--pf-price-weight': PRICE_WEIGHTS[theme.priceWeight ?? 'semibold'] ?? '600',
+    '--pf-price-size': PRICE_SIZES[theme.priceSize ?? 'md'] ?? '1em',
   } as React.CSSProperties;
 }
 
@@ -214,7 +223,7 @@ function Block(p: BlockProps) {
   const { block: b, L, form, c, setC, errors } = p;
   switch (b.type) {
     case 'text':
-      return <div className="pf-card pf-text">{b.text.split(/\n{2,}/).map((para, i) => <p key={i}>{para.split('\n').map((line, j, arr) => <React.Fragment key={j}>{line}{j < arr.length - 1 && <br />}</React.Fragment>)}</p>)}</div>;
+      return <div className="pf-card pf-text"><RichText text={b.text} /></div>;
     case 'divider':
       return <hr className="pf-divider" />;
     case 'section':
@@ -272,11 +281,16 @@ function Block(p: BlockProps) {
     }
     case 'products': {
       const cols = b.columns ?? (b.layout === 'list' ? 1 : 3);
-      const isGrid = cols > 1;
+      // Mobile defaults to the old breakpoint behaviour: two columns once the desktop layout is a grid.
+      const mcols = b.columnsMobile ?? (cols === 1 ? 1 : 2);
+      const classes = ['pf-products', `pf-cols-${cols}`, `pf-mcols-${mcols}`];
+      if (cols > 1) classes.push('pf-stack-d');
+      if (mcols > 1) classes.push('pf-stack-m');
+      if (b.fitThumbnail && b.showThumbnails) classes.push('pf-fit');
       return (
         <div>
           {b.title && <h2 className="pf-section" style={{ marginBottom: 8 }}>{b.title}</h2>}
-          <div className={`pf-products ${isGrid ? `grid pf-cols-${cols}` : 'pf-cols-1'}`}>
+          <div className={classes.join(' ')} style={{ '--pf-cols': cols, '--pf-mcols': mcols } as React.CSSProperties}>
             {(b.groups ?? []).map((g) => (
               <ProductCard
                 key={g.itemId}
@@ -341,8 +355,8 @@ function Block(p: BlockProps) {
         <div className="pf-card pf-grid">
           {b.title && <div className="pf-title" style={{ fontSize: '15px' }}>{b.title}</div>}
           {b.text && (
-            <div className="pf-text" style={{ fontSize: '13px', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-              {b.text}
+            <div className="pf-text" style={{ fontSize: '13px', lineHeight: 1.6 }}>
+              <RichText text={b.text} />
             </div>
           )}
           {b.src && (
@@ -628,7 +642,7 @@ function ProductCard({
             <div className="pf-row-name">
               {showThumb && p.thumb && <img className="pf-variant-thumb" src={p.thumb} alt="" />}
               <span>{p.variantName || g.name}</span>
-              {showPrice && !samePrice && <small>{formatMoney(p.price, form.currency)}</small>}
+              {showPrice && !samePrice && <small className="pf-price pf-price-row">{formatMoney(p.price, form.currency)}</small>}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <Stepper value={qty[p.key] ?? 0} max={max} onChange={(v) => setQ(p.key, v)} label={`${L('quantity')} ${p.variantName}`} />

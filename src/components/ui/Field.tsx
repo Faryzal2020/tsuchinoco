@@ -27,9 +27,11 @@ export function Select({ className, small, children, ...props }: React.SelectHTM
   );
 }
 
-export function Textarea({ className, ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea className={cn('textarea', className)} {...props} />;
-}
+export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTMLAttributes<HTMLTextAreaElement>>(
+  function Textarea({ className, ...props }, ref) {
+    return <textarea ref={ref} className={cn('textarea', className)} {...props} />;
+  },
+);
 
 export function Checkbox({ label, className, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { label?: string }) {
   return (
@@ -81,5 +83,38 @@ export function NumberCell({
       onBlur={commit}
       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') { setText(value === null ? '' : String(value)); setDirty(false); } }}
     />
+  );
+}
+
+/** Signed integer input with − and + buttons either side. Value is kept as text so partial input ("-") is allowed. */
+export function NumberStepper({ value, onChange, min, max, step = 1, className, disabled }: {
+  value: string;
+  onChange: (v: string) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+  className?: string;
+  disabled?: boolean;
+}) {
+  const n = Number(value);
+  const current = Number.isFinite(n) && value.trim() !== '' ? n : 0;
+  const clamp = (x: number) => Math.min(max ?? Infinity, Math.max(min ?? -Infinity, x));
+  const bump = (d: number) => onChange(String(clamp(current + d)));
+  const btn = 'inline-flex items-center justify-center w-10 h-10 shrink-0 rounded-lg border border-line bg-white text-ink text-lg font-bold leading-none shadow-xs hover:bg-cream hover:border-line-strong active:translate-y-px disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all';
+  return (
+    <div className={cn('flex items-center gap-2', className)}>
+      <button type="button" className={btn} aria-label="Decrease" disabled={disabled || (min !== undefined && current <= min)} onClick={() => bump(-step)}>−</button>
+      <input
+        type="text"
+        inputMode="numeric"
+        className="input text-center font-semibold tabular-nums flex-1 min-w-0"
+        value={value}
+        disabled={disabled}
+        onChange={(e) => { const t = e.target.value; if (/^-?\d*$/.test(t)) onChange(t); }}
+        onBlur={() => { if (value.trim() === '' || value === '-') onChange('0'); }}
+        onFocus={(e) => e.target.select()}
+      />
+      <button type="button" className={btn} aria-label="Increase" disabled={disabled || (max !== undefined && current >= max)} onClick={() => bump(step)}>+</button>
+    </div>
   );
 }

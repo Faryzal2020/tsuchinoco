@@ -11,23 +11,29 @@ import { splitKey } from '@/lib/keys';
 import { titleCase } from '@/lib/format';
 import { downloadCsv, toCsv } from '@/lib/csv';
 import Button from '@/components/ui/Button';
-import { Field, Input, Select, Textarea } from '@/components/ui/Field';
+import { Field, Input, Textarea } from '@/components/ui/Field';
 import { Empty, PageHeader, Pill, Stat, TableWrap } from '@/components/ui/Bits';
 import { Modal } from '@/components/ui/Dialog';
 import { VariantSelect, useVariantLabel } from '@/components/VariantSelect';
-import { QueryPage, useQuery } from '@/lib/useQuery';
+import { QueryPage } from '@/lib/useQuery';
+import { joinList, parseList, usePersistedFilters } from '@/lib/filterPrefs';
+import { MultiSelect } from '@/components/ui/MultiSelect';
+import { NumberStepper } from '@/components/ui/Field';
 
 function StockOverview() {
   const { items, itemsById, staff, movements, openOrders, settings, staffName } = useData();
   const { isMine } = usePrefs();
   const { me } = useAuth();
   const { run } = useToast();
-  const { get, set } = useQuery();
+  const { get, setFilters: set } = usePersistedFilters('tsu.filters.stock', ['type', 'manager', 'category', 'short']);
   const labelOf = useVariantLabel();
   const [search, setSearch] = useState('');
-  const type = get('type');
-  const manager = get('manager');
-  const categoryFilter = get('category');
+  const typeParam = get('type');
+  const managerParam = get('manager');
+  const categoryParam = get('category');
+  const types = useMemo(() => parseList(typeParam), [typeParam]);
+  const managers = useMemo(() => parseList(managerParam), [managerParam]);
+  const categories = useMemo(() => parseList(categoryParam), [categoryParam]);
   const onlyShort = get('short') === '1';
 
   const allCategories = useMemo(() => {
@@ -48,9 +54,9 @@ function StockOverview() {
   const rows = useMemo(() => {
     const list = stockRows(items, movements, openOrders).filter((r) => {
       const item = itemsById.get(r.itemId);
-      if (type && item?.type !== type) return false;
-      if (manager && item?.managerId !== manager) return false;
-      if (categoryFilter && item?.category !== categoryFilter) return false;
+      if (types.length > 0 && !types.includes(item?.type ?? '')) return false;
+      if (managers.length > 0 && !managers.includes(item?.managerId ?? '')) return false;
+      if (categories.length > 0 && !categories.includes(item?.category ?? '')) return false;
       if (!isMine(item)) return false;
       if (onlyShort && r.available > 0) return false;
 
@@ -100,9 +106,9 @@ function StockOverview() {
       }
       return sortAsc ? cmp : -cmp;
     });
-  }, [items, movements, openOrders, itemsById, type, manager, categoryFilter, isMine, onlyShort, search, sortCol, sortAsc, labelOf, staffName]);
+  }, [items, movements, openOrders, itemsById, types, managers, categories, isMine, onlyShort, search, sortCol, sortAsc, labelOf, staffName]);
 
-  const hasActiveFilters = Boolean(search || type || manager || categoryFilter || onlyShort);
+  const hasActiveFilters = Boolean(search || types.length || managers.length || categories.length || onlyShort);
 
   const resetFilters = () => {
     setSearch('');
@@ -112,7 +118,7 @@ function StockOverview() {
   // Correction modal
   const [open, setOpen] = useState(false);
   const [key, setKey] = useState('');
-  const [qty, setQty] = useState('');
+  const [qty, setQty] = useState('0');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const postCorrection = async () => {
@@ -122,7 +128,7 @@ function StockOverview() {
     const { itemId, variantId } = splitKey(key);
     const ok = await run(() => movementRepo.create({ itemId, variantId, qty: Math.round(n), reason: 'correction', note: note.trim() }, me), 'Correction posted');
     setBusy(false);
-    if (ok) { setOpen(false); setKey(''); setQty(''); setNote(''); }
+    if (ok) { setOpen(false); setKey(''); setQty('0'); setNote(''); }
   };
 
   const exportCsv = () => downloadCsv('stock', toCsv(rows.map((r) => {
@@ -139,7 +145,7 @@ function StockOverview() {
           <>
             <Button onClick={exportCsv}>Export CSV</Button>
             <Button href="/stock/ledger/">Movement ledger</Button>
-            <Button onClick={() => { setKey(''); setQty(''); setNote(''); setOpen(true); }}>Add correction</Button>
+            <Button onClick={() => { setKey(''); setQty('0'); setNote(''); setOpen(true); }}>Add correction</Button>
             <Button variant="primary" href="/stock/take/">Stock take</Button>
           </>
         }
@@ -155,20 +161,32 @@ function StockOverview() {
           onChange={(e) => setSearch(e.target.value)}
           className="flex-1 min-w-[200px]"
         />
-        <Select small value={type} onChange={(e) => set({ type: e.target.value })} className="w-auto min-w-[130px]">
-          <option value="">All Types</option>
-          {settings.itemTypes.map((t) => <option key={t} value={t}>{titleCase(t)}</option>)}
-        </Select>
+        <MultiSelect
+          values={types}
+          onChange={(v) => set({ type: joinList(v) })}
+          options={settings.itemTypes.map((t) => ({ value: t, label: titleCase(t) }))}
+          allLabel="All Types"
+          noun="types"
+          className="w-auto min-w-[130px]"
+        />
         {allCategories.length > 0 && (
-          <Select small value={categoryFilter} onChange={(e) => set({ category: e.target.value })} className="w-auto min-w-[130px]">
-            <option value="">All Categories</option>
-            {allCategories.map((c) => <option key={c} value={c}>{c}</option>)}
-          </Select>
+          <MultiSelect
+            values={categories}
+            onChange={(v) => set({ category: joinList(v) })}
+            options={allCategories.map((c) => ({ value: c, label: c }))}
+            allLabel="All Categories"
+            noun="categories"
+            className="w-auto min-w-[130px]"
+          />
         )}
-        <Select small value={manager} onChange={(e) => set({ manager: e.target.value })} className="w-auto min-w-[140px]">
-          <option value="">All Managers</option>
-          {staff.map((s) => <option key={s.id} value={s.id}>{s.displayName}</option>)}
-        </Select>
+        <MultiSelect
+          values={managers}
+          onChange={(v) => set({ manager: joinList(v) })}
+          options={staff.map((st) => ({ value: st.id, label: st.displayName }))}
+          allLabel="All Managers"
+          noun="managers"
+          className="w-auto min-w-[140px]"
+        />
         <Button size="sm" data-pressed={onlyShort ? 'true' : undefined} onClick={() => set({ short: onlyShort ? null : '1' })}>
           Short only
         </Button>
@@ -241,7 +259,7 @@ function StockOverview() {
                       type="button"
                       onClick={() => {
                         setKey(r.key);
-                        setQty('');
+                        setQty('0');
                         setNote('');
                         setOpen(true);
                       }}
@@ -263,10 +281,10 @@ function StockOverview() {
       )}
 
       <Modal open={open} onClose={() => setOpen(false)} title="Add stock correction"
-        footer={<><Button onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" onClick={postCorrection} busy={busy} disabled={!key || !qty || !note.trim()}>Post correction</Button></>}>
+        footer={<><Button onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" onClick={postCorrection} busy={busy} disabled={!key || !Number.isFinite(Number(qty)) || Math.round(Number(qty)) === 0 || !note.trim()}>Post correction</Button></>}>
         <div className="grid gap-3">
           <Field label="Variant"><VariantSelect value={key} onChange={setKey} /></Field>
-          <Field label="Quantity change" hint="Positive adds stock, negative removes it."><Input type="number" value={qty} onChange={(e) => setQty(e.target.value)} /></Field>
+          <Field label="Quantity change" hint="Positive adds stock, negative removes it."><NumberStepper value={qty} onChange={setQty} /></Field>
           <Field label="Reason note"><Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. found a box in storage / damaged in transit" /></Field>
         </div>
       </Modal>

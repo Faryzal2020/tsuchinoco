@@ -253,6 +253,8 @@ export interface Media {
 
 // ---- In-house forms ----
 
+export type FormFont = 'sans' | 'serif' | 'rounded' | 'mono';
+
 export interface FormTheme {
   background: string;
   surface: string;
@@ -261,6 +263,22 @@ export interface FormTheme {
   font: 'sans' | 'serif' | 'rounded';
   width: 'narrow' | 'normal' | 'wide' | 'widescreen';
   radius: 'sharp' | 'soft' | 'round';
+  /** Item price styling. Each is optional: absent means "follow the body text". */
+  priceColor?: string;
+  priceFont?: 'inherit' | FormFont;
+  priceWeight?: 'normal' | 'semibold' | 'bold' | 'black';
+  priceSize?: 'sm' | 'md' | 'lg' | 'xl';
+}
+
+/** A named theme shared by every staff member, saved from the form editor. */
+export interface ThemePresetDoc {
+  id: string;
+  name: string;
+  description: string;
+  theme: FormTheme;
+  createdAt: number;
+  updatedAt: number;
+  updatedBy: string;
 }
 
 export type ProductsSource =
@@ -277,7 +295,7 @@ export type FormBlock =
   | { id: string; type: 'image'; imageId: string; caption?: string; size: 'full' | 'half' }
   | { id: string; type: 'divider' }
   | { id: string; type: 'section'; title: string; description?: string }
-  | { id: string; type: 'products'; title?: string; source: ProductsSource; layout: 'list' | 'grid'; columns?: 1 | 2 | 3 | 4 | 5; showThumbnails: boolean; showPrices: boolean }
+  | { id: string; type: 'products'; title?: string; source: ProductsSource; layout: 'list' | 'grid'; columns?: 1 | 2 | 3 | 4 | 5; columnsMobile?: 1 | 2 | 3; fitThumbnail?: boolean; showThumbnails: boolean; showPrices: boolean }
   | { id: string; type: 'payment_instructions'; title?: string; text?: string; imageId?: string }
   | { id: string; type: 'customer' }
   | { id: string; type: 'fulfilment' }

@@ -21,7 +21,7 @@ import { db, storage } from './firebase';
 import { newId } from './keys';
 import { transactionId } from './forms';
 import type {
-  Batch, Counter, Event, FieldChange, FormDoc, FormTemplate, Item, LogAction, LogEntityType, Media, Order, OrderStatus, PublicForm, Settings, Staff, StockMovement, Submission, Wrapup,
+  Batch, Counter, Event, FieldChange, FormDoc, FormTemplate, Item, LogAction, LogEntityType, Media, Order, OrderStatus, PublicForm, Settings, Staff, StockMovement, Submission, ThemePresetDoc, Wrapup,
 } from '@/types';
 
 export const COL = {
@@ -39,6 +39,7 @@ export const COL = {
   submissions: 'submissions',
   counters: 'counters',
   templates: 'formTemplates',
+  themePresets: 'themePresets',
   logs: 'logs',
 } as const;
 
@@ -728,5 +729,22 @@ export const templateRepo = {
       b.update(d.ref, { isDefault: d.id === id, ...touch(by) });
     });
     await b.commit();
+  },
+};
+
+// ---- Theme presets (shared across staff) ----
+export const themePresetRepo = {
+  create: async (data: Omit<ThemePresetDoc, 'id' | keyof Meta>, by: string): Promise<string> => {
+    const id = newId();
+    await setDoc(doc(db, COL.themePresets, id), clean({ ...data, ...stamp(by) }));
+    await logActivity('create', 'form', `Saved theme preset "${data.name}"`, by, { entityId: id, entityName: data.name });
+    return id;
+  },
+  remove: async (id: string, by: string) => {
+    const ref = doc(db, COL.themePresets, id);
+    const snap = await getDoc(ref);
+    const name = snap.exists() ? (snap.data() as ThemePresetDoc).name : undefined;
+    await deleteDoc(ref);
+    await logActivity('delete', 'form', name ? `Deleted theme preset "${name}"` : 'Deleted theme preset', by, { entityId: id, entityName: name });
   },
 };

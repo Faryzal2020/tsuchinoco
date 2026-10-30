@@ -1,18 +1,19 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth';
 import { useData } from '@/lib/data';
 import { useToast } from '@/components/ui/Toast';
 import { QueryPage, useQuery } from '@/lib/useQuery';
-import { formRepo, templateRepo } from '@/lib/repo';
+import { formRepo, templateRepo, themePresetRepo } from '@/lib/repo';
 import { formChangedSincePublish, previewPublicForm, publishForm } from '@/lib/formActions';
 import { cloneFormFromBatch, applyTemplateToForm, saveFormAsTemplate } from '@/lib/templateActions';
 import {
   BLOCK_NAMES,
   THEME_PRESETS,
   type ThemePreset,
+  sameTheme,
   newBlock,
   pickupDaysFor,
   publicFormSize,
@@ -25,6 +26,7 @@ import {
 import { useMedia } from '@/lib/media';
 import ThumbnailInput from '@/components/form/ThumbnailInput';
 import FormRenderer from '@/components/form/FormRenderer';
+import { isSafeHref, linkToken } from '@/components/form/richText';
 import Button from '@/components/ui/Button';
 import { Checkbox, Field, Input, Select, Textarea } from '@/components/ui/Field';
 import { Modal, Confirm } from '@/components/ui/Dialog';
@@ -52,6 +54,7 @@ import {
   Copy,
   ExternalLink,
   Layers,
+  Link as LinkIcon,
   Monitor,
   Palette,
   Plus,
@@ -63,7 +66,8 @@ import {
   XCircle,
 } from 'lucide-react';
 
-const KEY_THEME_PRESETS = 'tsu.customThemePresets';
+/** Presets used to live in the browser; the first visit after the change moves them to the shared collection. */
+const KEY_LEGACY_THEME_PRESETS = 'tsu.customThemePresets';
 
 type StudioTab = 'blocks' | 'theme' | 'settings' | 'templates';
 
@@ -71,7 +75,7 @@ function FormStudio() {
   const { get } = useQuery();
   const id = get('id');
   const { me } = useAuth();
-  const { formsById, batches, events, itemsById, settings, publicFormsById, templates } = useData();
+  const { formsById, batches, events, itemsById, settings, publicFormsById, templates, themePresets } = useData();
   const { run, toast } = useToast();
 
   const originalForm = formsById.get(id);
@@ -87,59 +91,51 @@ function FormStudio() {
   const [blockToDelete, setBlockToDelete] = useState<string | null>(null);
   const [snap, setSnap] = useState<Omit<PublicForm, 'id'> | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [customPresets, setCustomPresets] = useState<ThemePreset[]>([]);
   const [presetName, setPresetName] = useState('');
 
-  // Load custom presets from localStorage
+  // One-time migration of presets saved in this browser before they moved to the database.
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(KEY_THEME_PRESETS);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          setCustomPresets(parsed);
-        }
+    let raw: string | null = null;
+    try { raw = localStorage.getItem(KEY_LEGACY_THEME_PRESETS); } catch { /* ignore */ }
+    if (!raw) return;
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch { parsed = null; }
+    const list = Array.isArray(parsed) ? (parsed as Partial<ThemePreset>[]) : [];
+    (async () => {
+      for (const p of list) {
+        if (!p || typeof p !== 'object' || !p.theme || !p.name) continue;
+        try { await themePresetRepo.create({ name: p.name, description: p.description ?? '', theme: p.theme }, me); } catch { return; }
       }
-    } catch {
-      /* ignore */
-    }
+      try { localStorage.removeItem(KEY_LEGACY_THEME_PRESETS); } catch { /* ignore */ }
+      if (list.length > 0) toast(`Moved ${list.length} theme preset${list.length === 1 ? '' : 's'} from this browser to the shared library`);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once
   }, []);
 
-  const saveCustomPresets = (next: ThemePreset[]) => {
-    setCustomPresets(next);
-    try {
-      localStorage.setItem(KEY_THEME_PRESETS, JSON.stringify(next));
-    } catch {
-      /* ignore */
-    }
+  const presetDescription = (theme: FormTheme) => {
+    const fontLabel = theme.font === 'serif' ? 'Serif' : theme.font === 'rounded' ? 'Rounded' : 'Sans';
+    const radiusLabel = theme.radius === 'sharp' ? 'Sharp' : theme.radius === 'round' ? 'Round' : 'Soft';
+    const widthLabel = theme.width === 'narrow' ? 'Narrow' : theme.width === 'wide' ? 'Wide' : theme.width === 'widescreen' ? 'Widescreen' : 'Normal';
+    return `${fontLabel} · ${radiusLabel} · ${widthLabel}`;
   };
 
-  const handleSavePreset = () => {
+  const handleSavePreset = async () => {
     if (!draft) return;
-    const name = presetName.trim() || `Custom Preset ${customPresets.length + 1}`;
-    const fontLabel = draft.theme.font === 'serif' ? 'Serif' : draft.theme.font === 'rounded' ? 'Rounded' : 'Sans';
-    const radiusLabel = draft.theme.radius === 'sharp' ? 'Sharp' : draft.theme.radius === 'round' ? 'Round' : 'Soft';
-    const widthLabel = draft.theme.width === 'narrow' ? 'Narrow' : draft.theme.width === 'wide' ? 'Wide' : 'Normal';
-    const description = `${fontLabel} · ${radiusLabel} · ${widthLabel}`;
-
-    const newPreset: ThemePreset = {
-      id: `custom_${Date.now()}`,
-      name,
-      description,
-      theme: { ...draft.theme },
-    };
-
-    saveCustomPresets([...customPresets, newPreset]);
-    setPresetName('');
-    toast(`Saved theme preset: "${name}"`);
+    const name = presetName.trim() || `Custom Preset ${themePresets.length + 1}`;
+    setBusy('preset');
+    const ok = await run(() => themePresetRepo.create({ name, description: presetDescription(draft.theme), theme: { ...draft.theme } }, me), `Saved theme preset: "${name}"`);
+    setBusy(null);
+    if (ok) setPresetName('');
   };
 
-  const handleDeletePreset = (presetId: string, name: string) => {
-    saveCustomPresets(customPresets.filter((p) => p.id !== presetId));
-    toast(`Deleted preset: "${name}"`);
+  const handleDeletePreset = async (presetId: string, name: string) => {
+    await run(() => themePresetRepo.remove(presetId, me), `Deleted preset: "${name}"`);
   };
 
-  const allPresets = useMemo(() => [...THEME_PRESETS, ...customPresets], [customPresets]);
+  const allPresets = useMemo<ThemePreset[]>(
+    () => [...THEME_PRESETS, ...themePresets.map((p) => ({ id: p.id, name: p.name, description: p.description, theme: p.theme }))],
+    [themePresets],
+  );
 
   // Initialize draft when form loads
   useEffect(() => {
@@ -470,18 +466,11 @@ function FormStudio() {
             <div className="p-4 space-y-5 max-h-[calc(100vh-220px)] overflow-y-auto">
               <div>
                 <h2 className="text-sm font-bold text-ink">Theme Presets</h2>
-                <p className="text-xs text-ink-2 mb-3">1-click designer color palettes crafted for artist circle forms.</p>
+                <p className="text-xs text-ink-2 mb-3">1-click palettes. Saved presets are shared with every staff member.</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {allPresets.map((p) => {
-                    const isCustom = p.id !== 'cream';
-                    const active =
-                      draft.theme.background === p.theme.background &&
-                      draft.theme.surface === p.theme.surface &&
-                      draft.theme.accent === p.theme.accent &&
-                      draft.theme.text === p.theme.text &&
-                      draft.theme.font === p.theme.font &&
-                      draft.theme.radius === p.theme.radius &&
-                      draft.theme.width === p.theme.width;
+                    const isCustom = !THEME_PRESETS.some((x) => x.id === p.id);
+                    const active = sameTheme(draft.theme, p.theme);
                     return (
                       <div
                         key={p.id}
@@ -527,6 +516,7 @@ function FormStudio() {
                   <button
                     type="button"
                     onClick={handleSavePreset}
+                    disabled={busy === 'preset'}
                     aria-label="Save current theme as new preset"
                     title="Save current theme as new preset"
                     className="flex items-center justify-center p-2.5 min-h-[58px] rounded-lg border-2 border-dashed border-line hover:border-accent hover:bg-accent/5 text-ink-2 hover:text-accent transition-all cursor-pointer"
@@ -650,10 +640,80 @@ function FormStudio() {
                       value={draft.theme.width}
                       onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, width: e.target.value as FormTheme['width'] } })}
                     >
-                      <option value="narrow">Narrow (520px)</option>
-                      <option value="normal">Normal (680px)</option>
-                      <option value="wide">Wide (860px)</option>
-                      <option value="widescreen">Widescreen (1240px)</option>
+                      <option value="narrow">Narrow (780px)</option>
+                      <option value="normal">Normal (1020px)</option>
+                      <option value="wide">Wide (1290px)</option>
+                      <option value="widescreen">Widescreen (1860px)</option>
+                    </Select>
+                  </Field>
+                </div>
+              </div>
+
+              <div className="border-t border-line pt-4 space-y-3">
+                <h3 className="text-xs font-bold uppercase text-ink-2 tracking-wider">Item Prices</h3>
+                <p className="text-[11px] text-ink-2 -mt-1">How prices look on product cards and variant rows.</p>
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <Field label="Price color">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={draft.theme.priceColor || draft.theme.text}
+                        onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, priceColor: e.target.value } })}
+                        className="w-8 h-8 rounded-md cursor-pointer border border-line"
+                      />
+                      <Input
+                        small
+                        placeholder="Muted text"
+                        value={draft.theme.priceColor ?? ''}
+                        onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, priceColor: e.target.value || undefined } })}
+                      />
+                      {draft.theme.priceColor && (
+                        <button
+                          type="button"
+                          title="Back to default (muted text)"
+                          onClick={() => setDraft({ ...draft, theme: { ...draft.theme, priceColor: undefined } })}
+                          className="text-ink-2 hover:text-ink shrink-0 cursor-pointer"
+                        >
+                          <XCircle size={14} />
+                        </button>
+                      )}
+                    </div>
+                  </Field>
+                  <Field label="Price font">
+                    <Select
+                      small
+                      value={draft.theme.priceFont ?? 'inherit'}
+                      onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, priceFont: e.target.value as NonNullable<FormTheme['priceFont']> } })}
+                    >
+                      <option value="inherit">Same as body</option>
+                      <option value="sans">Sans (Clean)</option>
+                      <option value="serif">Serif (Editorial)</option>
+                      <option value="rounded">Rounded (Manga)</option>
+                      <option value="mono">Mono (Receipt)</option>
+                    </Select>
+                  </Field>
+                  <Field label="Price weight">
+                    <Select
+                      small
+                      value={draft.theme.priceWeight ?? 'semibold'}
+                      onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, priceWeight: e.target.value as NonNullable<FormTheme['priceWeight']> } })}
+                    >
+                      <option value="normal">Regular</option>
+                      <option value="semibold">Semibold</option>
+                      <option value="bold">Bold</option>
+                      <option value="black">Black</option>
+                    </Select>
+                  </Field>
+                  <Field label="Price size">
+                    <Select
+                      small
+                      value={draft.theme.priceSize ?? 'md'}
+                      onChange={(e) => setDraft({ ...draft, theme: { ...draft.theme, priceSize: e.target.value as NonNullable<FormTheme['priceSize']> } })}
+                    >
+                      <option value="sm">Small</option>
+                      <option value="md">Normal</option>
+                      <option value="lg">Large</option>
+                      <option value="xl">Extra large</option>
                     </Select>
                   </Field>
                 </div>
@@ -849,7 +909,7 @@ function FormStudio() {
               className={`transition-all duration-300 w-full h-full max-h-full min-h-0 overflow-y-auto overscroll-contain relative transform-gpu ${
                 viewport === 'mobile'
                   ? 'max-w-[400px] shadow-xl rounded-2xl border-4 border-zinc-700 bg-white'
-                  : 'max-w-[1280px] rounded-xl shadow-sm bg-white'
+                  : 'max-w-[1920px] rounded-xl shadow-sm bg-white'
               }`}
             >
               {!snap ? (
@@ -1279,46 +1339,22 @@ function BlockConfigEditor({
             )}
           </div>
 
-          <Field label="Columns per row" hint="Choose 1 to 5 columns on desktop (defaults to 3, adapts on mobile)">
-            <div className="grid grid-cols-5 gap-1.5 p-1 bg-cream/60 rounded-lg border border-line">
-              {([1, 2, 3, 4, 5] as const).map((cols) => {
-                const currentCols = b.columns ?? (b.layout === 'list' ? 1 : 3);
-                const active = currentCols === cols;
-                return (
-                  <button
-                    key={cols}
-                    type="button"
-                    onClick={() =>
-                      onChange({
-                        columns: cols,
-                        layout: cols === 1 ? 'list' : 'grid',
-                      })
-                    }
-                    className={`flex flex-col items-center justify-center py-2 px-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${
-                      active
-                        ? 'bg-white shadow-xs text-accent font-bold border border-accent/40 ring-1 ring-accent/20'
-                        : 'text-ink-2 hover:text-ink hover:bg-white/60'
-                    }`}
-                  >
-                    {/* Visual mini-column wireframe */}
-                    <div className="flex gap-0.5 items-center justify-center w-full h-3 mb-1 px-0.5">
-                      {Array.from({ length: cols }).map((_, i) => (
-                        <span
-                          key={i}
-                          className={`h-full rounded-[1px] flex-1 ${
-                            active ? 'bg-accent' : 'bg-zinc-300'
-                          }`}
-                        />
-                      ))}
-                    </div>
-                    <span className="text-[11px] leading-tight">
-                      {cols} {cols === 1 ? 'Col' : 'Cols'}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </Field>
+          <ColumnsPicker
+            label="Columns per row · Desktop"
+            hint="Up to 5 columns on screens wider than 700px. One column shows items as a list."
+            icon={<Monitor size={12} />}
+            choices={[1, 2, 3, 4, 5]}
+            value={b.columns ?? (b.layout === 'list' ? 1 : 3)}
+            onChange={(cols) => onChange({ columns: cols as 1 | 2 | 3 | 4 | 5, layout: cols === 1 ? 'list' : 'grid' })}
+          />
+          <ColumnsPicker
+            label="Columns per row · Mobile"
+            hint="Up to 3 columns on phones."
+            icon={<Smartphone size={12} />}
+            choices={[1, 2, 3]}
+            value={b.columnsMobile ?? ((b.columns ?? (b.layout === 'list' ? 1 : 3)) === 1 ? 1 : 2)}
+            onChange={(cols) => onChange({ columnsMobile: cols as 1 | 2 | 3 })}
+          />
 
           <div className="flex gap-4 pt-1">
             <Checkbox
@@ -1332,6 +1368,14 @@ function BlockConfigEditor({
               onChange={(e) => onChange({ showPrices: e.target.checked })}
             />
           </div>
+          {b.showThumbnails && (
+            <Checkbox
+              label="Fit thumbnail width"
+              title="Cards take the width of their image instead of equal columns; images are shown uncropped"
+              checked={!!b.fitThumbnail}
+              onChange={(e) => onChange({ fitThumbnail: e.target.checked })}
+            />
+          )}
         </div>
       );
     }
@@ -1362,11 +1406,7 @@ function BlockConfigEditor({
       );
 
     case 'text':
-      return (
-        <Field label="Text content" className="text-xs">
-          <Textarea rows={4} value={b.text} onChange={(e) => onChange({ text: e.target.value })} />
-        </Field>
-      );
+      return <TextBlockEditor text={b.text} onChange={(text) => onChange({ text })} />;
 
     case 'section':
       return (
@@ -1401,6 +1441,120 @@ function BlockConfigEditor({
     default:
       return <p className="text-ink-2 text-xs">This block does not require layout configuration.</p>;
   }
+}
+
+/** Row of column-count buttons with a tiny wireframe per choice. */
+function ColumnsPicker({ label, hint, icon, choices, value, onChange }: {
+  label: string;
+  hint?: string;
+  icon?: React.ReactNode;
+  choices: number[];
+  value: number;
+  onChange: (cols: number) => void;
+}) {
+  return (
+    <div className="block text-xs">
+      <span className="label inline-flex items-center gap-1">{icon}{label}</span>
+      <div className="grid gap-1.5 p-1 bg-cream/60 rounded-lg border border-line" style={{ gridTemplateColumns: `repeat(${choices.length}, minmax(0, 1fr))` }}>
+        {choices.map((cols) => {
+          const active = value === cols;
+          return (
+            <button
+              key={cols}
+              type="button"
+              onClick={() => onChange(cols)}
+              className={`flex flex-col items-center justify-center py-2 px-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+                active
+                  ? 'bg-white shadow-xs text-accent font-bold border border-accent/40 ring-1 ring-accent/20'
+                  : 'text-ink-2 hover:text-ink hover:bg-white/60'
+              }`}
+            >
+              <div className="flex gap-0.5 items-center justify-center w-full h-3 mb-1 px-0.5">
+                {Array.from({ length: cols }).map((_, i) => (
+                  <span key={i} className={`h-full rounded-[1px] flex-1 ${active ? 'bg-accent' : 'bg-zinc-300'}`} />
+                ))}
+              </div>
+              <span className="text-[11px] leading-tight">{cols} {cols === 1 ? 'Col' : 'Cols'}</span>
+            </button>
+          );
+        })}
+      </div>
+      {hint && <span className="hint mt-1 block">{hint}</span>}
+    </div>
+  );
+}
+
+/** Plain text with `[label](https://url)` links. The Insert link helper writes that token at the cursor. */
+function TextBlockEditor({ text, onChange }: { text: string; onChange: (text: string) => void }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkLabel, setLinkLabel] = useState('');
+  const [linkUrl, setLinkUrl] = useState('');
+  const [range, setRange] = useState<[number, number]>([0, 0]);
+
+  const openLink = () => {
+    const el = ref.current;
+    const start = el?.selectionStart ?? text.length;
+    const end = el?.selectionEnd ?? text.length;
+    setRange([start, end]);
+    setLinkLabel(text.slice(start, end));
+    setLinkUrl('');
+    setLinkOpen(true);
+  };
+
+  const insertLink = () => {
+    const url = linkUrl.trim();
+    if (!isSafeHref(url)) return;
+    const label = linkLabel.trim() || url;
+    const token = linkToken(label, url);
+    const [start, end] = range;
+    const next = text.slice(0, start) + token + text.slice(end);
+    onChange(next);
+    setLinkOpen(false);
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(start + token.length, start + token.length);
+    });
+  };
+
+  return (
+    <div className="space-y-2 text-xs">
+      <div className="flex items-center justify-between">
+        <span className="label mb-0">Text content</span>
+        <Button size="sm" variant="quiet" onClick={openLink} title="Insert a clickable link at the cursor (or around the selected text)">
+          <LinkIcon size={13} className="mr-1" /> Insert link
+        </Button>
+      </div>
+      <Textarea ref={ref} rows={5} value={text} onChange={(e) => onChange(e.target.value)} />
+      <span className="hint block">
+        Blank line starts a new paragraph. Links are written as <code className="font-mono">[label](https://…)</code> and shown blue and clickable; bare https:// addresses are linked too.
+      </span>
+      {linkOpen && (
+        <div className="p-2.5 rounded-lg border border-accent/40 bg-accent/5 space-y-2">
+          <Field label="Link text">
+            <Input small autoFocus value={linkLabel} placeholder="e.g. Our Instagram" onChange={(e) => setLinkLabel(e.target.value)} />
+          </Field>
+          <Field label="URL" hint={linkUrl && !isSafeHref(linkUrl) ? 'Must start with https://, http:// or mailto:' : undefined}>
+            <Input
+              small
+              type="url"
+              inputMode="url"
+              value={linkUrl}
+              placeholder="https://"
+              onChange={(e) => setLinkUrl(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); insertLink(); } }}
+            />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Button size="sm" onClick={() => setLinkOpen(false)}>Cancel</Button>
+            <Button size="sm" variant="primary" disabled={!isSafeHref(linkUrl)} onClick={insertLink}>Insert</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** Tab for fast cloning from past events and template management */

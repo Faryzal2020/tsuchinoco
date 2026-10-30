@@ -60,6 +60,20 @@ export interface ThemePreset {
   theme: FormTheme;
 }
 
+/** Fills the optional price styling so two themes compare equal when they render the same. */
+export const normalizeTheme = (t: FormTheme): Required<FormTheme> => ({
+  ...t,
+  priceColor: t.priceColor || '',
+  priceFont: t.priceFont ?? 'inherit',
+  priceWeight: t.priceWeight ?? 'semibold',
+  priceSize: t.priceSize ?? 'md',
+});
+
+export const sameTheme = (a: FormTheme, b: FormTheme): boolean => {
+  const x = normalizeTheme(a), y = normalizeTheme(b);
+  return (Object.keys(x) as (keyof FormTheme)[]).every((k) => x[k] === y[k]);
+};
+
 export const THEME_PRESETS: ThemePreset[] = [
   {
     id: 'cream',
@@ -123,7 +137,7 @@ export function newBlock(type: FormBlockType): FormBlock {
     case 'image': return { id, type, imageId: '', size: 'full' };
     case 'divider': return { id, type };
     case 'section': return { id, type, title: 'Section' };
-    case 'products': return { id, type, source: { kind: 'all' }, layout: 'grid', columns: 3, showThumbnails: true, showPrices: true };
+    case 'products': return { id, type, source: { kind: 'all' }, layout: 'grid', columns: 3, columnsMobile: 2, showThumbnails: true, showPrices: true };
     case 'payment_instructions': return { id, type, title: 'Payment details (Cara Pembayaran)', text: 'Scan QRIS below or transfer to circle bank account.', imageId: '' };
     case 'customer': return { id, type };
     case 'fulfilment': return { id, type };
@@ -147,8 +161,8 @@ export function defaultBlocks(batch: Batch, event: Event, items: Map<string, Ite
     if (item.kind === 'bundle') { bundles = true; continue; }
     if (!types.includes(item.type)) types.push(item.type);
   }
-  for (const t of types) blocks.push({ id: newId(6), type: 'products', title: titleCase(t), source: { kind: 'type', type: t }, layout: 'grid', columns: 3, showThumbnails: true, showPrices: true });
-  if (bundles) blocks.push({ id: newId(6), type: 'products', title: 'Bundles', source: { kind: 'bundles' }, layout: 'grid', columns: 3, showThumbnails: true, showPrices: true });
+  for (const t of types) blocks.push({ id: newId(6), type: 'products', title: titleCase(t), source: { kind: 'type', type: t }, layout: 'grid', columns: 3, columnsMobile: 2, showThumbnails: true, showPrices: true });
+  if (bundles) blocks.push({ id: newId(6), type: 'products', title: 'Bundles', source: { kind: 'bundles' }, layout: 'grid', columns: 3, columnsMobile: 2, showThumbnails: true, showPrices: true });
   blocks.push({ id: newId(6), type: 'notes' });
   blocks.push({ id: newId(6), type: 'submit' });
   return blocks;
