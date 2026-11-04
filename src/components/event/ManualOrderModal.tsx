@@ -8,9 +8,11 @@ import { orderRepo } from '@/lib/repo';
 import { expandLines } from '@/lib/bundle';
 import { splitKey, variantKey, variantsOf } from '@/lib/keys';
 import { formatMoney } from '@/lib/format';
-import type { Batch, Event, Fulfilment, RawLine } from '@/types';
+import { offeringKey } from '@/lib/forms';
+import { catalogPrice, orderTypeForBatch, quote, storefrontOf } from '@/lib/pricing';
+import type { Batch, Event, Fulfilment, Item, OrderType, RawLine } from '@/types';
 import Button from '@/components/ui/Button';
-import { Field, Input, Select, Textarea } from '@/components/ui/Field';
+import { Checkbox, Field, Input, Select, Textarea } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Dialog';
 
 interface LineDraft {
@@ -31,20 +33,32 @@ export default function ManualOrderModal({
   batches: Batch[];
 }) {
   const { me } = useAuth();
-  const { items, itemsById, settings } = useData();
+  const { items, itemsById, settings, publicPrices } = useData();
   const { run, toast } = useToast();
   const [batchId, setBatchId] = useState(batches.find((b) => b.status === 'open')?.id ?? batches.at(-1)?.id ?? '');
   const [fulfilment, setFulfilment] = useState<Fulfilment>('pickup');
   const [c, setC] = useState({ name: '', email: '', phone: '', address: '' });
   const [lines, setLines] = useState<LineDraft[]>([{ key: '', qty: '1' }]);
   const [busy, setBusy] = useState(false);
+  const [paid, setPaid] = useState(false);
+
+  const batch = batches.find((b) => b.id === batchId);
+  const orderType: OrderType = event.kind === 'store' ? 'mail_order' : batch ? orderTypeForBatch(batch) : 'preorder';
+  const basis = publicPrices?.basis ?? storefrontOf(settings).priceBasis;
+  const overrides = new Map((batch?.offering ?? []).map((e) => [offeringKey(e), e.overridePrice]));
+  // Same rules as the customer pages: live price entry if there is one, else the catalogue.
+  const priceOf = (item: Item, key: string) => {
+    const lp = publicPrices?.items?.[key];
+    const q = quote(lp ?? catalogPrice(item, key), orderType, basis, overrides.get(key));
+    return { ...q, priceEntryId: lp?.entryId };
+  };
 
   const options = items.filter((i) => i.active).flatMap((i) =>
     i.kind === 'bundle'
-      ? [{ key: i.id, label: `${i.name} (bundle)`, price: i.price }]
+      ? [{ key: i.id, label: `${i.name} (bundle)`, price: priceOf(i, i.id).unitPrice }]
       : variantsOf(i)
           .filter((v) => v.active)
-          .map((v) => ({ key: variantKey(i.id, v.id), label: v.name ? `${i.name} · ${v.name}` : i.name, price: i.price }))
+          .map((v) => ({ key: variantKey(i.id, v.id), label: v.name ? `${i.name} · ${v.name}` : i.name, price: priceOf(i, variantKey(i.id, v.id)).unitPrice }))
   );
 
   const rawLines: RawLine[] = lines.flatMap((l) => {
@@ -53,7 +67,9 @@ export default function ManualOrderModal({
     const item = itemsById.get(l.key);
     const isBundle = item?.kind === 'bundle';
     const { itemId, variantId } = isBundle ? { itemId: l.key, variantId: undefined } : splitKey(l.key);
-    const price = itemsById.get(itemId)?.price ?? 0;
+    const lineItem = itemsById.get(itemId);
+    const q = lineItem ? priceOf(lineItem, l.key) : undefined;
+    const price = q?.unitPrice ?? 0;
 
     // Ensure default bundle selections if not explicitly picked yet
     let bundleSelections = l.bundleSelections;
@@ -71,11 +87,13 @@ export default function ManualOrderModal({
       bundleSelections = { ...defaults, ...(bundleSelections ?? {}) };
     }
 
-    return [{ itemId, variantId, qty, unitPrice: price, lineTotal: price * qty, bundleSelections }];
+    return [{
+      itemId, variantId, qty, unitPrice: price, lineTotal: price * qty, bundleSelections,
+      priceEntryId: q?.priceEntryId, priceBasis: q?.basis, discountPercent: q?.discountPercent, refPrice: q?.refPrice,
+    }];
   });
 
   const total = rawLines.reduce((s, l) => s + l.lineTotal, 0);
-  const batch = batches.find((b) => b.id === batchId);
   const valid = !!batch && c.name.trim() && rawLines.length > 0;
 
   const save = async () => {
@@ -99,6 +117,9 @@ export default function ManualOrderModal({
           },
           fulfilment: ful,
           status: ful === 'pickup' ? 'awaiting_pickup' : 'awaiting_shipment',
+          orderType,
+          payment: paid ? 'paid' : 'unpaid',
+          ...(paid ? { paidAt: Date.now(), paidBy: me } : {}),
           rawLines,
           lines: expandLines(rawLines, itemsById),
           total,
@@ -116,6 +137,7 @@ export default function ManualOrderModal({
       onClose();
       setC({ name: '', email: '', phone: '', address: '' });
       setLines([{ key: '', qty: '1' }]);
+      setPaid(false);
     }
   };
 
@@ -167,6 +189,7 @@ export default function ManualOrderModal({
               <Textarea value={c.address} onChange={(e) => setC({ ...c, address: e.target.value })} />
             </Field>
           )}
+          <Checkbox label="Already paid" checked={paid} onChange={(e) => setPaid(e.target.checked)} />
         </div>
         <div>
           <span className="label">Lines</span>

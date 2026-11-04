@@ -16,6 +16,7 @@ import { DailyBars, Meter, fmtBytes, fmtCount } from '@/components/settings/Usag
 import type { Media } from '@/types';
 import Button from '@/components/ui/Button';
 import { Checkbox, Field, Input } from '@/components/ui/Field';
+import StorefrontPanel from '@/components/settings/StorefrontPanel';
 import { PageHeader, Panel, Pill, TableWrap } from '@/components/ui/Bits';
 
 export default function SettingsPage() {
@@ -102,6 +103,8 @@ export default function SettingsPage() {
               <div><Button variant="primary" onClick={saveDefaults}>Save defaults</Button></div>
             </div>
           </Panel>
+
+          <StorefrontPanel />
 
           <CloudStoragePanel usage={usage} />
 

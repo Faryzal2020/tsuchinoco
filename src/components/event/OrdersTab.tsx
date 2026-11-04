@@ -13,7 +13,9 @@ import { downloadCsv, toCsv } from '@/lib/csv';
 import type { Order, OrderStatus } from '@/types';
 import Button from '@/components/ui/Button';
 import { Checkbox, Input, Select } from '@/components/ui/Field';
-import { Empty, Pill, StatusPill, TableWrap } from '@/components/ui/Bits';
+import { Empty, Pill, TableWrap } from '@/components/ui/Bits';
+import { DeliverDialog, OrderStagePill } from '@/components/orders/OrderBits';
+import { paymentOf } from '@/lib/orders';
 import { useVariantLabel } from '@/components/VariantSelect';
 import OrderModal from './OrderModal';
 import ManualOrderModal from './ManualOrderModal';
@@ -105,7 +107,7 @@ function OrderList({ event, batches, orders, onOpen }: TabProps & { onOpen: (o: 
                 <td>B{batchNo(o.batchId)}</td>
                 <td><span className="font-semibold">{o.customer.name}</span><span className="hint block">{o.customer.email}</span></td>
                 <td>{o.fulfilment === 'pickup' ? 'Pickup' : 'Mail'}</td>
-                <td><StatusPill status={o.status} />{o.status === 'not_collected' && isPastIso(o.returnToStockBy) && <Pill tone="red" className="ml-1">Overdue</Pill>}</td>
+                <td><OrderStagePill order={o} />{o.status === 'not_collected' && isPastIso(o.returnToStockBy) && <Pill tone="red" className="ml-1">Overdue</Pill>}</td>
                 <td className="num">{orderItemCount(o)}</td>
                 <td className="num">{formatMoney(o.total, settings.currency)}</td>
               </tr>
@@ -175,8 +177,9 @@ function PickupList({ event, orders, onOpen }: { event: TabProps['event']; order
 
   const bulkCollect = async () => {
     setBusy(true);
-    const targets = waiting.filter((o) => !keep.has(o.id));
-    const ok = await run(() => orderRepo.bulkSetStatus(targets, 'collected', me), `${targets.length} marked collected`);
+    const targets = waiting.filter((o) => !keep.has(o.id) && paymentOf(o) === 'paid');
+    const skipped = waiting.filter((o) => !keep.has(o.id)).length - targets.length;
+    const ok = await run(() => orderRepo.bulkSetStatus(targets, 'collected', me), `${targets.length} marked picked up${skipped ? `; ${skipped} unpaid left waiting` : ''}`);
     setBusy(false);
     if (ok) { setBulk(false); setKeep(new Set()); }
   };
@@ -185,18 +188,18 @@ function PickupList({ event, orders, onOpen }: { event: TabProps['event']; order
     <>
       <div className="mb-3 flex flex-wrap items-center gap-2 no-print">
         <Input placeholder="Customer name" value={search} onChange={(e) => setSearch(e.target.value)} className="w-[240px]" autoFocus />
-        <span className="hint">{waiting.length} waiting · {rows.length - waiting.length} collected</span>
+        <span className="hint">{waiting.length} waiting · {rows.length - waiting.length} picked up</span>
         <div className="ml-auto flex gap-2">
-          {!bulk ? <Button size="sm" onClick={() => setBulk(true)} disabled={waiting.length === 0}>Reconcile: mark all collected except…</Button> : (
+          {!bulk ? <Button size="sm" onClick={() => setBulk(true)} disabled={waiting.length === 0}>Reconcile: mark all picked up except…</Button> : (
             <>
               <Button size="sm" onClick={() => { setBulk(false); setKeep(new Set()); }}>Cancel</Button>
-              <Button size="sm" variant="primary" busy={busy} onClick={bulkCollect}>Mark {waiting.length - keep.size} collected</Button>
+              <Button size="sm" variant="primary" busy={busy} onClick={bulkCollect}>Mark {waiting.filter((o) => !keep.has(o.id) && paymentOf(o) === 'paid').length} picked up</Button>
             </>
           )}
           <Button size="sm" onClick={() => window.print()}>Print</Button>
         </div>
       </div>
-      {bulk && <p className="mb-3 rounded-md bg-yellow-soft px-3 py-2 text-sm text-yellow-ink">Tick the orders that were <b>not</b> collected. Everyone else will be marked collected.</p>}
+      {bulk && <p className="mb-3 rounded-md bg-yellow-soft px-3 py-2 text-sm text-yellow-ink">Tick the orders that were <b>not</b> collected. Everyone else who has paid will be marked picked up; unpaid orders stay waiting.</p>}
       {rows.length === 0 ? <Empty title="No pickup orders" /> : (
         <TableWrap>
           <thead><tr>{bulk && <th>Not collected</th>}<th>Customer</th><th>Items</th><th>Status</th><th className="no-print" /></tr></thead>
@@ -206,9 +209,9 @@ function PickupList({ event, orders, onOpen }: { event: TabProps['event']; order
                 {bulk && <td>{o.status === 'awaiting_pickup' && <Checkbox checked={keep.has(o.id)} onChange={(e) => setKeep((s) => { const n = new Set(s); if (e.target.checked) n.add(o.id); else n.delete(o.id); return n; })} />}</td>}
                 <td><span className="font-semibold text-base">{o.customer.name}</span><span className="hint block">{o.customer.phone || o.customer.email}</span></td>
                 <td className="text-sm">{o.rawLines.map((l, i) => { const lb = labelOf(l.itemId, l.variantId ?? 'default'); return <span key={i} className="block">{l.qty} × {lb.item}{lb.variant && ` · ${lb.variant}`}</span>; })}</td>
-                <td><StatusPill status={o.status} /></td>
+                <td><OrderStagePill order={o} /></td>
                 <td className="no-print text-right whitespace-nowrap">
-                  {o.status === 'awaiting_pickup' && !bulk && <Button size="sm" variant="primary" onClick={() => run(() => orderRepo.setStatus(o, 'collected', me), 'Collected')}>Collected</Button>}
+                  {o.status === 'awaiting_pickup' && !bulk && <Button size="sm" variant="primary" disabled={paymentOf(o) !== 'paid'} title={paymentOf(o) !== 'paid' ? 'Unpaid: mark it paid in Details first' : undefined} onClick={() => run(() => orderRepo.setStatus(o, 'collected', me), 'Picked up')}>Picked up</Button>}
                   {o.status === 'collected' && !bulk && <Button size="sm" variant="quiet" onClick={() => run(() => orderRepo.setStatus(o, 'awaiting_pickup', me))}>Undo</Button>}
                   <Button size="sm" variant="quiet" onClick={() => onOpen(o)}>Details</Button>
                 </td>
@@ -223,17 +226,16 @@ function PickupList({ event, orders, onOpen }: { event: TabProps['event']; order
 }
 
 function PackingList({ event, orders, onOpen }: { event: TabProps['event']; orders: Order[]; onOpen: (o: Order) => void }) {
-  const { me } = useAuth();
-  const { run } = useToast();
   const labelOf = useVariantLabel();
   const [showShipped, setShowShipped] = useState(false);
+  const [deliver, setDeliver] = useState<Order | null>(null);
   const rows = orders.filter((o) => (o.status === 'awaiting_shipment' || (showShipped && o.status === 'shipped')) || (o.status === 'not_collected' && o.customer.address))
     .sort((a, b) => a.customer.name.localeCompare(b.customer.name));
 
   return (
     <>
       <div className="mb-3 flex flex-wrap items-center gap-3 no-print">
-        <Checkbox label="Include shipped" checked={showShipped} onChange={(e) => setShowShipped(e.target.checked)} />
+        <Checkbox label="Include delivered" checked={showShipped} onChange={(e) => setShowShipped(e.target.checked)} />
         <span className="hint">Mail orders plus uncollected pickups that now have an address.</span>
         <Button size="sm" className="ml-auto" onClick={() => window.print()}>Print</Button>
       </div>
@@ -246,9 +248,9 @@ function PackingList({ event, orders, onOpen }: { event: TabProps['event']; orde
                 <td><span className="font-semibold">{o.customer.name}</span><span className="hint block">{o.customer.phone}</span></td>
                 <td className="text-sm whitespace-pre-wrap max-w-[280px]">{o.customer.address || <span className="text-red-ink">No address yet</span>}</td>
                 <td className="text-sm">{o.rawLines.map((l, i) => { const lb = labelOf(l.itemId, l.variantId ?? 'default'); return <span key={i} className="block">{l.qty} × {lb.item}{lb.variant && ` · ${lb.variant}`}</span>; })}</td>
-                <td><StatusPill status={o.status} />{o.shippedAt && <span className="hint block">{formatDate(o.shippedAt)}</span>}</td>
+                <td><OrderStagePill order={o} />{o.shippedAt && <span className="hint block">{formatDate(o.shippedAt)}</span>}{o.tracking && <span className="hint block mono">{o.tracking.courier} {o.tracking.number}</span>}</td>
                 <td className="no-print text-right whitespace-nowrap">
-                  {o.status !== 'shipped' && <Button size="sm" variant="primary" disabled={!o.customer.address} onClick={() => run(() => orderRepo.setStatus(o, 'shipped', me), 'Marked shipped, stock updated')}>Shipped</Button>}
+                  {o.status !== 'shipped' && <Button size="sm" variant="primary" disabled={!o.customer.address || paymentOf(o) !== 'paid'} title={paymentOf(o) !== 'paid' ? 'Unpaid: mark it paid in Details first' : undefined} onClick={() => setDeliver(o)}>Delivered</Button>}
                   <Button size="sm" variant="quiet" onClick={() => onOpen(o)}>Details</Button>
                 </td>
               </tr>
@@ -256,7 +258,8 @@ function PackingList({ event, orders, onOpen }: { event: TabProps['event']; orde
           </tbody>
         </TableWrap>
       )}
-      <p className="hint mt-2">{event.name}. Marking shipped posts the stock movement.</p>
+      <p className="hint mt-2">{event.name}. Marking delivered needs a tracking number and posts the stock movement.</p>
+      <DeliverDialog order={deliver} open={!!deliver} onClose={() => setDeliver(null)} />
     </>
   );
 }

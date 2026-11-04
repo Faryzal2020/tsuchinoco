@@ -322,3 +322,18 @@ Everything else stays staff-only. Customers never read the catalogue, orders, or
 - **Import** runs in the staff app while it is open: a listener on `submissions` with `status == 'new'` processes each one in a transaction: read the counter, read the submission (must still be `new`), build raw lines at the offering price for that key, expand bundles, write the order with `source: 'web'`, `externalId` = submission id, `transactionId` from the counter, mark the submission `imported` with the order id. Unknown keys are skipped; a submission with no valid lines is marked `rejected`.
 - **Manual orders** take the next sequence number from the same counter.
 - A legacy batch with `provider: 'jotform'` still shows its JotForm link; its generation and import functions need Cloud Functions, which require the Blaze plan. See `docs/ROADMAP.md`.
+
+## Storefront phase A: order types, payment, prices (2026-11-04)
+
+Design: https://claude.ai/artifact/Rr9Gkay3xdr4oYD7cVWtq6
+
+- **Order type** `orders.orderType`: `preorder` (a preorder batch of an event) or `mail_order` (a post-event batch, or later the standing store channel). Older orders derive it from the batch mode (`orderTypeOf` in `src/lib/orders.ts`).
+- **Payment** `orders.payment`: `unpaid` | `paid`, with `paidAt`, `paidBy`. Separate from `status`, which still drives stock. Picked up and delivered both require paid. Older orders derive it: collected and shipped are paid, everything else unpaid (`paymentOf`). Settings › Prices and orders writes both fields onto old orders once.
+- **Stage** shown to staff: Unpaid → Paid → Picked up / Delivered, side exits Not collected and Cancelled. `shipped` is labelled Delivered and needs `orders.tracking: { courier, number, url? }`.
+- **Mail-order hold**: an open mail order waits while any upcoming event has not ended. `orders.holdReleased` is the staff override.
+- **Price history** `priceHistory/{id}`: `{ itemId, key, po, ots, discountPercent?, effectiveFrom, by, note? }`. Create-only in the rules. Every catalogue write calls `syncPriceList` (`src/lib/prices.ts`), which appends an entry for each key whose price changed.
+- **Live price list** `publicPrices/current`: `{ basis, graceMinutes, items: key → { entryId, po, ots, discountPercent?, since, prev? }, updatedAt }`. Public read. The customer form reads it live, so catalogue price changes need no republish; the snapshot keeps only offering overrides (`publicForms.overrides`).
+- **Discount** `discountPercent` on items and variants (variant wins, 0 on a variant means none). Applies to both order types and rounds up to the next 1.000.
+- **Price of a line** (`quote` in `src/lib/pricing.ts`): offering override, else PO or OTS by `settings.storefront.priceBasis[orderType]` (default preorder PO, mail order OTS), then the discount. Lines store `priceEntryId`, `priceBasis`, `discountPercent`, `refPrice`.
+- **Checkout grace**: submissions carry `seen` (key → entry id) and a server `createdAt`. The importer charges the entry the customer saw if it was replaced no more than `graceMinutes` (default 60) before submission; otherwise the current price, and the order gets `priceFlag`.
+- **Accepting window**: publish writes `publicForms.acceptFrom` / `acceptUntil` from the batch dates (start of the opening day to the end of the closing day, local time). The rules reject submissions outside it using server time.

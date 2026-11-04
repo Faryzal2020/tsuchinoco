@@ -12,61 +12,139 @@ import { orderItemCount } from '@/lib/compute';
 import { formatDate, formatDateTime, formatMoney, isPastIso } from '@/lib/format';
 import { downloadCsv, toCsv } from '@/lib/csv';
 import { QueryPage, useQuery } from '@/lib/useQuery';
-import type { Order, OrderStatus } from '@/types';
+import type { Order, OrderStatus, OrderType } from '@/types';
+import { useAuth } from '@/lib/auth';
+import { orderRepo } from '@/lib/repo';
+import { eventCode } from '@/lib/forms';
+import { groupKeyOf, holdOf, isUnfulfilled, ORDER_STATUS_LABELS, orderTypeOf, paymentOf } from '@/lib/orders';
+import { OrderStagePill, OrderTypeCell } from '@/components/orders/OrderBits';
 import Button from '@/components/ui/Button';
-import { Input, Select } from '@/components/ui/Field';
-import { Empty, Loading, PageHeader, Panel, Pill, StatusPill, TableWrap } from '@/components/ui/Bits';
+import { Checkbox, Input, Select } from '@/components/ui/Field';
+import { Empty, Loading, PageHeader, Panel, Pill, TableWrap } from '@/components/ui/Bits';
 import OrderModal from '@/components/event/OrderModal';
 import ManualOrderModal from '@/components/event/ManualOrderModal';
 
 const STATUSES: OrderStatus[] = ['awaiting_pickup', 'collected', 'not_collected', 'awaiting_shipment', 'shipped', 'cancelled'];
 
+/** Quick views for the questions staff ask most. */
+const QUICK = [
+  { id: 'receipt', label: 'Receipt to check' },
+  { id: 'tosend', label: 'Paid, to send' },
+  { id: 'unpaidclosed', label: 'Unpaid after close' },
+  { id: 'flagged', label: 'Price changed' },
+] as const;
+
+interface Row {
+  o: Order;
+  type: OrderType;
+  group: string;
+  held: boolean;
+  paid: boolean;
+}
+
 function OrdersPage() {
-  const { events, batches, settings, items, staff, movements } = useData();
+  const { events, batches, settings, items, staff, movements, openOrders } = useData();
+  const { me } = useAuth();
+  const { run } = useToast();
   const { currentEventId } = usePrefs();
   const { get, set } = useQuery();
+  const view = get('view'); // '' = unfulfilled, 'all', or a group key
   const eventFilter = get('event');
   const batchId = get('batch');
   const status = get('status');
   const fulfilment = get('fulfilment');
+  const payment = get('payment');
+  const source = get('source');
+  const quick = get('quick');
   const [search, setSearch] = useState('');
   const [openOrder, setOpenOrder] = useState<Order | null>(null);
   const [manual, setManual] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  const upcoming = useMemo(() => events.filter((e) => e.status === 'upcoming').sort((a, b) => (a.startDate || '9').localeCompare(b.startDate || '9')), [events]);
+  const upcoming = useMemo(() => events.filter((e) => e.status === 'upcoming' && e.kind !== 'store').sort((a, b) => (a.startDate || '9').localeCompare(b.startDate || '9')), [events]);
   const scopeIds = useMemo(() => (eventFilter ? [eventFilter] : upcoming.map((e) => e.id)), [eventFilter, upcoming]);
-  const { orders, loaded } = useOrdersForEvents(scopeIds);
-  const live = useMemo(() => orders.find((o) => o.id === openOrder?.id) ?? null, [orders, openOrder]);
+  const all = useOrdersForEvents(view === 'all' ? scopeIds : []);
+  const source_ = view === 'all' ? all.orders : openOrders;
+  const loaded = view === 'all' ? all.loaded : true;
 
-  const eventById = new Map(events.map((e) => [e.id, e]));
-  const batchById = new Map(batches.map((b) => [b.id, b]));
+  const eventById = useMemo(() => new Map(events.map((e) => [e.id, e])), [events]);
+  const batchById = useMemo(() => new Map(batches.map((b) => [b.id, b])), [batches]);
   const scopeBatches = batches.filter((b) => scopeIds.includes(b.eventId));
 
-  const rows = orders.filter((o) => {
-    if (batchId && o.batchId !== batchId) return false;
-    if (status && o.status !== status) return false;
-    if (fulfilment && o.fulfilment !== fulfilment) return false;
+  const enrich = (o: Order): Row => {
+    const b = batchById.get(o.batchId);
+    const type = orderTypeOf(o, b, eventById.get(o.eventId));
+    return { o, type, group: groupKeyOf(o, type), held: !!holdOf(o, type, events), paid: paymentOf(o) === 'paid' };
+  };
+  const unfulfilled = useMemo(() => openOrders.map(enrich), [openOrders, batchById, eventById, events]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Tabs: one per preorder event and fulfilment, then all mail orders.
+  const groups = useMemo(() => {
+    const m = new Map<string, { key: string; label: string; count: number; sort: string }>();
+    for (const r of unfulfilled) {
+      const e = eventById.get(r.o.eventId);
+      const label = r.type === 'mail_order' ? 'Mail order' : `Preorder · ${e ? eventCode(e) : '?'} ${r.o.fulfilment === 'pickup' ? 'pickup' : 'ship after event'}`;
+      const sort = r.type === 'mail_order' ? 'z' : `a${e?.startDate ?? ''}${r.o.fulfilment === 'pickup' ? '0' : '1'}`;
+      const g = m.get(r.group) ?? { key: r.group, label, count: 0, sort };
+      g.count++;
+      m.set(r.group, g);
+    }
+    return [...m.values()].sort((a, b) => a.sort.localeCompare(b.sort));
+  }, [unfulfilled, eventById]);
+
+  const rows = source_.map(enrich).filter((r) => {
+    const o = r.o;
+    if (view && view !== 'all' && r.group !== view) return false;
+    if (view === 'all') {
+      if (batchId && o.batchId !== batchId) return false;
+      if (status && o.status !== status) return false;
+      if (fulfilment && o.fulfilment !== fulfilment) return false;
+    }
+    if (payment && (payment === 'paid') !== r.paid) return false;
+    if (source && (o.source === 'jotform' ? 'web' : o.source) !== source) return false;
+    if (quick === 'receipt' && (r.paid || !o.paymentProofUrl)) return false;
+    if (quick === 'tosend' && (!r.paid || r.held || !isUnfulfilled(o) || (o.fulfilment !== 'mail' && o.status !== 'not_collected'))) return false;
+    if (quick === 'unpaidclosed' && (r.paid || r.type !== 'preorder' || !['closed', 'fulfilled'].includes(batchById.get(o.batchId)?.status ?? ''))) return false;
+    if (quick === 'flagged' && !o.priceFlag) return false;
     if (search) {
       const s = search.toLowerCase();
-      if (!o.customer.name.toLowerCase().includes(s) && !o.customer.email.toLowerCase().includes(s) && !(o.transactionId ?? '').toLowerCase().includes(s) && !o.customer.phone.includes(s)) return false;
+      const hay = [o.customer.name, o.customer.email, o.customer.phone, o.transactionId ?? '', o.tracking?.number ?? ''].join(' ').toLowerCase();
+      if (!hay.includes(s)) return false;
     }
     return true;
-  });
+  }).sort((a, b) => view === 'all'
+    ? b.o.submittedAt - a.o.submittedAt
+    // Unfulfilled: price flags first, then preorders before mail orders, oldest first.
+    : (a.o.priceFlag ? 0 : 1) - (b.o.priceFlag ? 0 : 1) || (a.type === b.type ? 0 : a.type === 'preorder' ? -1 : 1) || a.o.submittedAt - b.o.submittedAt);
+
+  const live = useMemo(() => source_.find((o) => o.id === openOrder?.id) ?? openOrder, [source_, openOrder]);
+  const chosen = rows.filter((r) => selected.has(r.o.id));
+  const toggle = (id: string, on: boolean) => setSelected((cur) => { const n = new Set(cur); if (on) n.add(id); else n.delete(id); return n; });
+  const allOn = rows.length > 0 && rows.every((r) => selected.has(r.o.id));
 
   const manualEvent = eventById.get(eventFilter || currentEventId) ?? upcoming[0];
-  const openTotal = rows.filter((o) => o.status !== 'cancelled').reduce((s, o) => s + o.total, 0);
+  const openTotal = rows.filter((r) => r.o.status !== 'cancelled').reduce((s, r) => s + r.o.total, 0);
   const firstRun = items.length === 0 || events.length === 0;
 
-  const exportCsv = () => downloadCsv('orders', toCsv(rows.map((o) => ({
-    id: o.transactionId ?? '', submitted: formatDateTime(o.submittedAt), event: eventById.get(o.eventId)?.name ?? '', batch: batchById.get(o.batchId)?.number ?? '',
-    name: o.customer.name, email: o.customer.email, phone: o.customer.phone, fulfilment: o.fulfilment, pickupDay: o.pickupDay ?? '', status: o.status,
-    items: orderItemCount(o), total: o.total, address: o.customer.address ?? '', notes: o.notes,
+  const exportCsv = () => downloadCsv('orders', toCsv(rows.map(({ o, type }) => ({
+    id: o.transactionId ?? '', submitted: formatDateTime(o.submittedAt), type: type === 'preorder' ? 'Preorder' : 'Mail order', event: eventById.get(o.eventId)?.name ?? '', batch: batchById.get(o.batchId)?.number ?? '',
+    name: o.customer.name, email: o.customer.email, phone: o.customer.phone, fulfilment: o.fulfilment, pickupDay: o.pickupDay ?? '', payment: paymentOf(o), status: ORDER_STATUS_LABELS[o.status],
+    courier: o.tracking?.courier ?? '', tracking: o.tracking?.number ?? '', items: orderItemCount(o), total: o.total, address: o.customer.address ?? '', notes: o.notes,
   }))));
+
+  const setView = (v: string) => { setSelected(new Set()); set({ view: v || null, quick: null }); };
+  const tab = (key: string, label: string, count?: number) => (
+    <button type="button" key={key} onClick={() => setView(key)} className={`btn btn-sm ${view === key ? 'btn-primary' : ''}`} aria-pressed={view === key}>
+      {label}{count !== undefined && <span className="ml-1.5 mono">{count}</span>}
+    </button>
+  );
 
   return (
     <>
       <PageHeader title="Orders" actions={<><Button onClick={exportCsv} disabled={rows.length === 0}>Export CSV</Button><Button variant="primary" onClick={() => setManual(true)} disabled={!manualEvent}>Add manual order</Button></>}>
-        {eventFilter ? eventById.get(eventFilter)?.name : upcoming.length === 0 ? 'No upcoming events.' : `All upcoming events: ${upcoming.map((e) => e.name).join(', ')}.`}
+        {view === 'all'
+          ? (eventFilter ? eventById.get(eventFilter)?.name : upcoming.length === 0 ? 'No upcoming events.' : `All orders of upcoming events: ${upcoming.map((e) => e.name).join(', ')}.`)
+          : 'Every order not yet picked up, delivered or cancelled, from every event and source.'}
       </PageHeader>
 
       {firstRun && (
@@ -83,38 +161,85 @@ function OrdersPage() {
 
       <SubmissionQueue />
 
+      <div className="mb-3 flex flex-wrap gap-2" role="tablist" aria-label="Order views">
+        {tab('', 'Unfulfilled', unfulfilled.length)}
+        {groups.map((g) => tab(g.key, g.label, g.count))}
+        {tab('all', 'All orders')}
+      </div>
+
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Select small value={eventFilter} onChange={(e) => set({ event: e.target.value, batch: null })} className="w-[220px]">
-          <option value="">All upcoming events</option>
-          {events.map((e) => <option key={e.id} value={e.id}>{e.name}{e.status === 'wrapped' ? ' (wrapped)' : ''}</option>)}
+        {view === 'all' && (
+          <>
+            <Select small value={eventFilter} onChange={(e) => set({ event: e.target.value, batch: null })} className="w-[220px]">
+              <option value="">All upcoming events</option>
+              {events.map((e) => <option key={e.id} value={e.id}>{e.name}{e.status === 'wrapped' ? ' (wrapped)' : ''}</option>)}
+            </Select>
+            <Select small value={batchId} onChange={(e) => set({ batch: e.target.value })} className="w-[150px]" disabled={!eventFilter}>
+              <option value="">All batches</option>
+              {scopeBatches.map((b) => <option key={b.id} value={b.id}>Batch {b.number}</option>)}
+            </Select>
+            <Select small value={fulfilment} onChange={(e) => set({ fulfilment: e.target.value })} className="w-[130px]"><option value="">Pickup + mail</option><option value="pickup">Pickup</option><option value="mail">Mail</option></Select>
+            <Select small value={status} onChange={(e) => set({ status: e.target.value })} className="w-[170px]">
+              <option value="">All statuses</option>
+              {STATUSES.map((st) => <option key={st} value={st}>{ORDER_STATUS_LABELS[st]}</option>)}
+            </Select>
+          </>
+        )}
+        <Select small value={payment} onChange={(e) => set({ payment: e.target.value })} className="w-[140px]" aria-label="Payment">
+          <option value="">Paid + unpaid</option><option value="unpaid">Unpaid</option><option value="paid">Paid</option>
         </Select>
-        <Select small value={batchId} onChange={(e) => set({ batch: e.target.value })} className="w-[150px]" disabled={!eventFilter}>
-          <option value="">All batches</option>
-          {scopeBatches.map((b) => <option key={b.id} value={b.id}>Batch {b.number}</option>)}
+        <Select small value={source} onChange={(e) => set({ source: e.target.value })} className="w-[140px]" aria-label="Source">
+          <option value="">All sources</option><option value="store">Storefront</option><option value="web">Form</option><option value="manual">Manual</option>
         </Select>
-        <Select small value={fulfilment} onChange={(e) => set({ fulfilment: e.target.value })} className="w-[130px]"><option value="">Pickup + mail</option><option value="pickup">Pickup</option><option value="mail">Mail</option></Select>
-        <Select small value={status} onChange={(e) => set({ status: e.target.value })} className="w-[170px]">
-          <option value="">All statuses</option>
-          {STATUSES.map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
-        </Select>
-        <Input small placeholder="Search name, e-mail, phone, or ID" value={search} onChange={(e) => setSearch(e.target.value)} className="w-[260px]" />
+        <Input small placeholder="Search name, phone, order ID, tracking" value={search} onChange={(e) => setSearch(e.target.value)} className="w-[270px]" />
         <span className="hint ml-auto">{rows.length} orders · {formatMoney(openTotal, settings.currency)}</span>
       </div>
 
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span className="hint">Show only:</span>
+        {QUICK.map((q) => (
+          <button type="button" key={q.id} className={`btn btn-sm ${quick === q.id ? 'btn-accent' : 'btn-quiet'}`} aria-pressed={quick === q.id} onClick={() => { setSelected(new Set()); set({ quick: quick === q.id ? null : q.id }); }}>{q.label}</button>
+        ))}
+      </div>
+
+      {chosen.length > 0 && (
+        <Panel className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="font-semibold">{chosen.length} selected</span>
+          <Button size="sm" variant="primary" disabled={!chosen.some((r) => !r.paid && isUnfulfilled(r.o))}
+            onClick={async () => { const t = chosen.filter((r) => !r.paid && isUnfulfilled(r.o)).map((r) => r.o); if (await run(() => orderRepo.setPayment(t, 'paid', me), `${t.length} marked paid`)) setSelected(new Set()); }}>
+            Mark paid
+          </Button>
+          <Button size="sm" disabled={!chosen.some((r) => r.held)}
+            onClick={async () => { const t = chosen.filter((r) => r.held).map((r) => r.o); if (await run(() => orderRepo.releaseHold(t, me), `Hold released on ${t.length}`)) setSelected(new Set()); }}>
+            Release hold
+          </Button>
+          <Button size="sm" variant="quiet" onClick={() => setSelected(new Set())}>Clear selection</Button>
+        </Panel>
+      )}
+
       {!loaded ? <Loading label="Loading orders…" /> : rows.length === 0 ? (
-        <Empty title="No orders">{orders.length === 0 ? 'Orders appear here as customers submit the preorder form.' : 'Nothing matches these filters.'}</Empty>
+        <Empty title={view === 'all' ? 'No orders' : 'Nothing to fulfil'}>{source_.length === 0 ? (view === 'all' ? 'Orders appear here as customers submit the preorder form.' : 'Every order is picked up, delivered or cancelled.') : 'Nothing matches these filters.'}</Empty>
       ) : (
         <TableWrap>
-          <thead><tr><th>ID</th><th>Submitted</th><th>Event</th><th>Customer</th><th>Fulfilment</th><th>Status</th><th className="num">Items</th><th className="num">Total</th></tr></thead>
+          <thead><tr>
+            <th><Checkbox aria-label="Select all" checked={allOn} onChange={(e) => setSelected(e.target.checked ? new Set(rows.map((r) => r.o.id)) : new Set())} /></th>
+            <th>Order</th><th>Type</th><th>Customer</th><th>Stage</th><th>Source</th><th className="num">Items</th><th className="num">Total</th>
+          </tr></thead>
           <tbody>
-            {rows.map((o) => (
+            {rows.map(({ o }) => (
               <tr key={o.id} className="clickable" onClick={() => setOpenOrder(o)}>
-                <td className="mono whitespace-nowrap">{o.transactionId || <span className="text-muted">—</span>}</td>
-                <td className="whitespace-nowrap">{formatDateTime(o.submittedAt)}</td>
-                <td className="whitespace-nowrap">{eventById.get(o.eventId)?.name ?? '?'} <span className="text-ink-2">B{batchById.get(o.batchId)?.number ?? '?'}</span></td>
-                <td><span className="font-semibold">{o.customer.name}</span><span className="hint block">{o.customer.email || o.customer.phone}</span></td>
-                <td>{o.fulfilment === 'pickup' ? 'Pickup' : 'Mail'}{o.pickupDay && <span className="hint block">{o.pickupDay}</span>}</td>
-                <td><StatusPill status={o.status} />{o.status === 'not_collected' && isPastIso(o.returnToStockBy) && <Pill tone="red" className="ml-1">Overdue</Pill>}</td>
+                <td onClick={(e) => e.stopPropagation()}><Checkbox aria-label={`Select ${o.transactionId || o.customer.name}`} checked={selected.has(o.id)} onChange={(e) => toggle(o.id, e.target.checked)} /></td>
+                <td className="whitespace-nowrap"><span className="mono">{o.transactionId || <span className="text-muted">—</span>}</span><span className="hint block">{formatDateTime(o.submittedAt)}</span></td>
+                <td><OrderTypeCell order={o} /></td>
+                <td><span className="font-semibold">{o.customer.name}</span><span className="hint block">{o.customer.phone || o.customer.email}</span></td>
+                <td>
+                  <OrderStagePill order={o} />
+                  {o.status === 'not_collected' && isPastIso(o.returnToStockBy) && <Pill tone="red" className="ml-1">Overdue</Pill>}
+                  {o.priceFlag && <span className="hint block text-yellow-ink">Price changed</span>}
+                  {!o.priceFlag && paymentOf(o) === 'unpaid' && o.paymentProofUrl && isUnfulfilled(o) && <span className="hint block">Receipt uploaded</span>}
+                  {o.tracking && <span className="hint block mono">{o.tracking.courier} {o.tracking.number}</span>}
+                </td>
+                <td>{SOURCE_LABELS[o.source] ?? o.source}</td>
                 <td className="num">{orderItemCount(o)}</td>
                 <td className="num">{formatMoney(o.total, settings.currency)}</td>
               </tr>
@@ -126,11 +251,11 @@ function OrdersPage() {
       {upcoming.length > 0 && (
         <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {upcoming.map((e) => {
-            const eo = orders.filter((o) => o.eventId === e.id && o.status !== 'cancelled');
+            const eo = unfulfilled.filter((r) => r.o.eventId === e.id).map((r) => r.o);
             return (
               <Panel key={e.id}>
                 <div className="flex items-baseline justify-between gap-2"><Link href={`/events/view/?id=${e.id}`} className="font-bold text-blue-ink">{e.name}</Link><span className="hint">{formatDate(e.startDate)}</span></div>
-                <div className="hint mt-1">{eo.filter((o) => o.fulfilment === 'pickup').length} pickup · {eo.filter((o) => o.fulfilment === 'mail').length} mail</div>
+                <div className="hint mt-1">{eo.filter((o) => o.fulfilment === 'pickup').length} pickup · {eo.filter((o) => o.fulfilment === 'mail').length} mail still open</div>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Button size="sm" href={`/events/view/?id=${e.id}&tab=orders&view=pickup`}>Pickup list</Button>
                   <Button size="sm" href={`/events/view/?id=${e.id}&tab=orders&view=packing`}>Packing list</Button>
@@ -147,6 +272,8 @@ function OrdersPage() {
     </>
   );
 }
+
+const SOURCE_LABELS: Record<string, string> = { web: 'Form', jotform: 'Form (JotForm)', manual: 'Manual', store: 'Storefront' };
 
 function SubmissionQueue() {
   const { pending, rejected, busy, errors, importNow } = useImporter();

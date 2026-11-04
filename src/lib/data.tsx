@@ -8,7 +8,7 @@ import { collection, doc, onSnapshot, query, where, type DocumentData, type Quer
 import { db } from './firebase';
 import { COL } from './repo';
 import { useAuth } from './auth';
-import type { Batch, Event, FormDoc, FormTemplate, Item, Order, PublicForm, Settings, Staff, StockMovement, Submission, ThemePresetDoc, Wrapup } from '@/types';
+import type { Batch, Event, FormDoc, FormTemplate, Item, Order, PublicForm, PublicPrices, Settings, Staff, StockMovement, Submission, ThemePresetDoc, Wrapup } from '@/types';
 import { DEFAULT_SETTINGS, OPEN_ORDER_STATUSES } from '@/types';
 
 interface Data {
@@ -32,6 +32,8 @@ interface Data {
   /** Shared theme presets saved from the form editor, newest first. */
   themePresets: ThemePresetDoc[];
   settings: Settings;
+  /** The live price list customers see; null until the first price sync. */
+  publicPrices: PublicPrices | null;
   staffName: (id: string) => string;
 }
 
@@ -57,6 +59,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [templates, setTemplates] = useState<FormTemplate[]>([]);
   const [themePresets, setThemePresets] = useState<ThemePresetDoc[]>([]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [publicPrices, setPublicPrices] = useState<PublicPrices | null>(null);
   const [loadedCount, setLoadedCount] = useState(0);
 
   useEffect(() => {
@@ -76,6 +79,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       onSnapshot(query(collection(db, COL.submissions), where('status', 'in', ['new', 'rejected'])), (s) => { setSubmissions(rowsOf<Submission>(s)); bump(); }, log('submissions')),
       onSnapshot(collection(db, COL.templates), (s) => { setTemplates(rowsOf<FormTemplate>(s)); bump(); }, log('templates')),
       onSnapshot(collection(db, COL.themePresets), (s) => { setThemePresets(rowsOf<ThemePresetDoc>(s)); bump(); }, log('themePresets')),
+      onSnapshot(doc(db, COL.publicPrices, 'current'), (s) => { setPublicPrices(s.exists() ? (s.data() as PublicPrices) : null); bump(); }, log('publicPrices')),
       onSnapshot(doc(db, COL.settings, 'global'), (s) => { setSettings(s.exists() ? { ...DEFAULT_SETTINGS, ...(s.data() as Partial<Settings>) } : DEFAULT_SETTINGS); bump(); }, log('settings')),
     ];
     return () => { unsubs.forEach((u) => u()); setLoadedCount(0); };
@@ -85,7 +89,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     const itemsById = new Map(items.map((i) => [i.id, i]));
     const staffById = new Map(staff.map((s) => [s.id, s]));
     return {
-      loaded: loadedCount >= 13,
+      loaded: loadedCount >= 14,
       staff: [...staff].sort((a, b) => a.displayName.localeCompare(b.displayName)),
       items: [...items].sort((a, b) => a.name.localeCompare(b.name)),
       itemsById,
@@ -103,9 +107,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       templatesById: new Map(templates.map((t) => [t.id, t])),
       themePresets: [...themePresets].sort((a, b) => a.createdAt - b.createdAt),
       settings,
+      publicPrices,
       staffName: (id: string) => staffById.get(id)?.displayName || id,
     };
-  }, [staff, items, events, batches, openOrders, movements, wrapups, forms, publicForms, submissions, templates, themePresets, settings, loadedCount]);
+  }, [staff, items, events, batches, openOrders, movements, wrapups, forms, publicForms, submissions, templates, themePresets, settings, publicPrices, loadedCount]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

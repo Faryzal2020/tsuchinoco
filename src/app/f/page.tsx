@@ -1,16 +1,16 @@
 'use client';
 
 // Public preorder form. Reads only publicForms/{id}; writes one submission. No staff gate.
-import React, { useEffect, useState } from 'react';
-import { collection, doc, onSnapshot, setDoc } from 'firebase/firestore';
+import React, { useEffect, useMemo, useState } from 'react';
+import { collection, doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 import { signInAnonymously } from 'firebase/auth';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, db, isFirebaseConfigured, storage } from '@/lib/firebase';
 import { clean, COL } from '@/lib/repo';
-import { DEFAULT_FORM_LABELS, DEFAULT_THEME } from '@/lib/forms';
+import { applyLivePrices, DEFAULT_FORM_LABELS, DEFAULT_THEME } from '@/lib/forms';
 import { QueryPage, useQuery } from '@/lib/useQuery';
 import FormRenderer, { themeStyle, type SubmissionDraft } from '@/components/form/FormRenderer';
-import type { PublicForm } from '@/types';
+import type { PublicForm, PublicPrices } from '@/types';
 
 function Message({ title, children }: { title: string; children?: React.ReactNode }) {
   return (
@@ -24,6 +24,16 @@ function CustomerForm() {
   const { get } = useQuery();
   const id = get('id');
   const [form, setForm] = useState<PublicForm | null | undefined>(undefined);
+  // Live prices: a price change in the catalogue shows here within seconds, without a republish.
+  // undefined = still loading; null = no list yet, so the published prices stand.
+  const [prices, setPrices] = useState<PublicPrices | null | undefined>(undefined);
+
+  useEffect(() => {
+    if (!isFirebaseConfigured) { setPrices(null); return; }
+    return onSnapshot(doc(db, COL.publicPrices, 'current'),
+      (s) => setPrices(s.exists() ? (s.data() as PublicPrices) : null),
+      (e) => { console.error('[prices]', e); setPrices(null); });
+  }, []);
 
   useEffect(() => {
     if (!id || !isFirebaseConfigured) { setForm(null); return; }
@@ -34,8 +44,10 @@ function CustomerForm() {
 
   useEffect(() => { if (form?.title) document.title = form.title; }, [form?.title]);
 
-  if (form === undefined) return <Message title="…" />;
-  if (form === null) return <Message title={DEFAULT_FORM_LABELS.notFound} />;
+  const live = useMemo(() => (form ? applyLivePrices(form, prices) : null), [form, prices]);
+
+  if (form === undefined || prices === undefined) return <Message title="…" />;
+  if (form === null || !live) return <Message title={DEFAULT_FORM_LABELS.notFound} />;
 
   const submit = async (draft: SubmissionDraft, proofFile?: File) => {
     if (!auth.currentUser) await signInAnonymously(auth);
@@ -49,10 +61,14 @@ function CustomerForm() {
       paymentProofUrl = await getDownloadURL(snap.ref);
     }
 
-    await setDoc(subRef, clean({ ...draft, paymentProofUrl }));
+    const seen = Object.fromEntries(Object.keys(draft.lines).filter((k) => live.seen[k]).map((k) => [k, live.seen[k]]));
+    await setDoc(subRef, {
+      ...clean({ ...draft, paymentProofUrl, orderType: form.mode === 'post' ? 'mail_order' : 'preorder', seen }),
+      createdAt: serverTimestamp(),
+    });
   };
 
-  return <FormRenderer key={form.version} form={form} onSubmit={submit} />;
+  return <FormRenderer key={form.version} form={live.form} onSubmit={submit} />;
 }
 
 export default function Page() {

@@ -10,7 +10,9 @@ import { allocateBundlePrice } from '@/lib/bundle';
 import { stockRows } from '@/lib/compute';
 import { newId, splitKey, variantKey } from '@/lib/keys';
 import { formatDateTime, formatMoney, titleCase } from '@/lib/format';
-import type { BundleComponent, Item, Variant } from '@/types';
+import { priceHistoryOf } from '@/lib/prices';
+import { validDiscount } from '@/lib/pricing';
+import type { BundleComponent, Item, PriceEntry, Variant } from '@/types';
 import Button from '@/components/ui/Button';
 import { Checkbox, Field, Input, Select, Textarea } from '@/components/ui/Field';
 import { Kv, Panel, Pill, StatusPill, TableWrap } from '@/components/ui/Bits';
@@ -270,7 +272,7 @@ export default function ItemEditorModal({
                   onClick={() => setTab('history')}
                   className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-colors ${tab === 'history' ? 'bg-yellow-soft text-yellow-ink border border-yellow-2' : 'hover:bg-surface-2 text-ink-2'}`}
                 >
-                  Stock & Sales
+                  History
                 </button>
               )}
             </div>
@@ -329,6 +331,10 @@ export default function ItemEditorModal({
                 <Input type="number" min={0} placeholder={draft.price ? `${draft.price}` : ''} value={draft.otsPrice ?? ''} onChange={(e) => up({ otsPrice: e.target.value === '' ? undefined : Number(e.target.value) })} />
               </Field>
 
+              <Field label="Discount (%), optional" hint="Applies to preorder and mail order. Rounded up to the next 1.000.">
+                <Input type="number" min={0} max={99} placeholder="No discount" value={validDiscount(draft.discountPercent) ?? ''} onChange={(e) => up({ discountPercent: e.target.value === '' ? 0 : Math.max(0, Math.min(99, Number(e.target.value))) })} />
+              </Field>
+
               <Field label="JPY Price (¥), optional" hint="Japan / foreign event price">
                 <Input type="number" min={0} placeholder="e.g. 500" value={draft.priceJpy ?? ''} onChange={(e) => up({ priceJpy: e.target.value === '' ? undefined : Number(e.target.value) })} />
               </Field>
@@ -355,6 +361,9 @@ export default function ItemEditorModal({
 
               <div className="sm:col-span-2">
                 <Checkbox label="Active (offered in new batches)" checked={draft.active} onChange={(e) => up({ active: e.target.checked })} />
+              </div>
+              <div className="sm:col-span-2">
+                <Checkbox label="Sell by mail order" checked={draft.mailOrder !== false} onChange={(e) => up({ mailOrder: e.target.checked })} />
               </div>
             </div>
           )}
@@ -526,8 +535,9 @@ export default function ItemEditorModal({
           )}
 
           {/* TAB 3: STOCK & SALES HISTORY */}
-          {tab === 'history' && !isNew && (
+          {tab === 'history' && !isNew && itemId && (
             <div className="space-y-4">
+              <PriceHistory itemId={itemId} item={existing} currency={settings.currency} />
               {!isBundle && (
                 <div>
                   <h3 className="font-bold text-sm mb-2">Current Stock</h3>
@@ -621,7 +631,7 @@ function VariantsEditorModalSection({
       </div>
       <div className="grid gap-2">
         {variants.map((v, idx) => (
-          <div key={v.id} className="grid grid-cols-[auto_minmax(0,1.2fr)_100px_90px_90px_auto_auto] items-center gap-2 p-2 border border-line rounded-md bg-white">
+          <div key={v.id} className="grid grid-cols-[auto_minmax(0,1.2fr)_100px_90px_90px_70px_auto_auto] items-center gap-2 p-2 border border-line rounded-md bg-white">
             <ThumbnailInput
               size="sm"
               value={v.thumbnailId}
@@ -681,6 +691,22 @@ function VariantsEditorModalSection({
                 onChange(next);
               }}
             />
+            <Input
+              small
+              type="number"
+              min={0}
+              max={99}
+              placeholder="% off"
+              value={v.discountPercent ?? ''}
+              title="Discount for this variant in percent. Empty = the item's discount; 0 = no discount."
+              onChange={(e) => {
+                const next = [...variants];
+                const val = e.target.value === '' ? undefined : Math.max(0, Math.min(99, Number(e.target.value)));
+                next[idx] = { ...v, discountPercent: val };
+                if (val === undefined) delete next[idx].discountPercent;
+                onChange(next);
+              }}
+            />
             <Checkbox
               label="Active"
               checked={v.active}
@@ -705,6 +731,44 @@ function VariantsEditorModalSection({
           + Add variant
         </Button>
       </div>
+    </div>
+  );
+}
+
+/** Every recorded price of this item, newest first. Entries are never edited. */
+function PriceHistory({ itemId, item, currency }: { itemId: string; item?: Item; currency: string }) {
+  const { staffName } = useData();
+  const labelOf = useVariantLabel();
+  const [rows, setRows] = useState<PriceEntry[] | null>(null);
+  const [error, setError] = useState('');
+  const stamp = item?.updatedAt;
+  useEffect(() => {
+    let live = true;
+    priceHistoryOf(itemId).then((r) => { if (live) setRows(r); }).catch((e) => { if (live) setError(e instanceof Error ? e.message : 'Could not load'); });
+    return () => { live = false; };
+  }, [itemId, stamp]);
+  return (
+    <div>
+      <h3 className="font-bold text-sm mb-2">Price History</h3>
+      {error ? <p className="hint">{error}</p> : rows === null ? <p className="hint">Loading…</p> : rows.length === 0 ? (
+        <p className="hint">No price recorded yet. Run the price list setup in Settings, or save the item once.</p>
+      ) : (
+        <TableWrap>
+          <thead><tr><th>From</th><th>Variant</th><th className="num">PO</th><th className="num">OTS</th><th className="num">Discount</th><th>By</th></tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td className="whitespace-nowrap">{formatDateTime(r.effectiveFrom)}</td>
+                <td>{r.key.includes(':') ? labelOf(r.itemId, splitKey(r.key).variantId).variant || '—' : 'Bundle'}</td>
+                <td className="num">{formatMoney(r.po, currency)}</td>
+                <td className="num">{formatMoney(r.ots, currency)}</td>
+                <td className="num">{r.discountPercent ? `${r.discountPercent}%` : '—'}</td>
+                <td>{staffName(r.by)}{r.note && <span className="hint block">{r.note}</span>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </TableWrap>
+      )}
     </div>
   );
 }

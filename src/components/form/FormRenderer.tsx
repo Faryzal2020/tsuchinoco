@@ -4,9 +4,9 @@
 // Renders a published form snapshot for customers (and for the staff preview). Owns the
 // customer's draft state and local validation; the caller decides what to do with the result.
 import React, { useMemo, useState } from 'react';
-import type { Fulfilment, PublicBlock, PublicForm, PublicProductGroup, Submission } from '@/types';
-import { confirmationCode, labelOf, type FormLabelKey } from '@/lib/forms';
-import { formatMoney } from '@/lib/format';
+import type { Fulfilment, PublicBlock, PublicForm, PublicProduct, PublicProductGroup, Submission } from '@/types';
+import { confirmationCode, labelOf, windowState, type FormLabelKey } from '@/lib/forms';
+import { formatDate, formatMoney } from '@/lib/format';
 import { RichText } from './richText';
 import { ArrowDown, ChevronDown, ChevronUp, ShoppingCart, Trash2, XCircle } from 'lucide-react';
 
@@ -115,7 +115,9 @@ export default function FormRenderer({ form, preview, onSubmit, onRemoveProduct 
   };
 
   const header = form.blocks.find((b) => b.type === 'header');
-  const closed = !form.enabled && !preview;
+  const win = windowState(form);
+  const notYet = !preview && form.enabled && win === 'before';
+  const closed = !preview && (!form.enabled || win !== 'open');
 
   return (
     <div className="pf" style={themeStyle(form.theme)}>
@@ -123,7 +125,12 @@ export default function FormRenderer({ form, preview, onSubmit, onRemoveProduct 
         {preview && <div className="pf-banner">{L('preview')}</div>}
         {header && <Header block={header} />}
 
-        {closed ? (
+        {notYet ? (
+          <div className="pf-card">
+            <div className="pf-title">{L('notOpenTitle')}</div>
+            <p style={{ marginTop: 8 }}>{L('opensOn')} {formatDate(form.acceptFrom)}.</p>
+          </div>
+        ) : closed ? (
           <div className="pf-card">
             <div className="pf-title">{L('closedTitle')}</div>
             <p style={{ marginTop: 8 }}>{form.settings.closedMessage}</p>
@@ -608,7 +615,7 @@ function ProductCard({
   onRemoveProduct?: (blockId: string, keys: string[]) => void;
 } & Pick<BlockProps, 'form' | 'qty' | 'setQ' | 'max' | 'L'>) {
   const single = g.products.length === 1 && !g.products[0].variantName;
-  const prices = new Set(g.products.map((p) => p.price));
+  const prices = new Set(g.products.map((p) => `${p.price}|${p.refPrice ?? ''}|${p.discountPercent ?? ''}`));
   const samePrice = prices.size === 1;
   const anyOn = g.products.some((p) => (qty[p.key] ?? 0) > 0);
   return (
@@ -633,7 +640,7 @@ function ProductCard({
         <div className="pf-row" style={{ paddingTop: 0 }}>
           <div className="pf-row-name">
             <div className="pf-product-name">{g.name}</div>
-            {showPrice && samePrice && <div className="pf-price">{formatMoney(g.products[0].price, form.currency)}</div>}
+            {showPrice && samePrice && <PriceTag p={g.products[0]} currency={form.currency} />}
           </div>
           {single && <Stepper value={qty[g.products[0].key] ?? 0} max={max} onChange={(v) => setQ(g.products[0].key, v)} label={L('quantity')} />}
         </div>
@@ -642,7 +649,7 @@ function ProductCard({
             <div className="pf-row-name">
               {showThumb && p.thumb && <img className="pf-variant-thumb" src={p.thumb} alt="" />}
               <span>{p.variantName || g.name}</span>
-              {showPrice && !samePrice && <small className="pf-price pf-price-row">{formatMoney(p.price, form.currency)}</small>}
+              {showPrice && !samePrice && <PriceTag p={p} currency={form.currency} row />}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <Stepper value={qty[p.key] ?? 0} max={max} onChange={(v) => setQ(p.key, v)} label={`${L('quantity')} ${p.variantName}`} />
@@ -828,5 +835,18 @@ function FloatingCart({ chosen, total, currency, max, setQ }: FloatingCartProps)
         </div>
       )}
     </div>
+  );
+}
+
+/** Final price, then the struck reference price with its label, then the discount in words. No icons. */
+function PriceTag({ p, currency, row }: { p: PublicProduct; currency: string; row?: boolean }) {
+  return (
+    <span className="pf-price-tag">
+      <span className={row ? 'pf-price pf-price-row' : 'pf-price'}>{formatMoney(p.price, currency)}</span>
+      {typeof p.refPrice === 'number' && p.refPrice > p.price && (
+        <span className="pf-price-ref">{p.refLabel && <span>{p.refLabel} </span>}<s>{formatMoney(p.refPrice, currency)}</s></span>
+      )}
+      {p.discountPercent ? <span className="pf-price-off">{p.discountPercent}% off</span> : null}
+    </span>
   );
 }

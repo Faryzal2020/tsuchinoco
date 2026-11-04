@@ -37,7 +37,7 @@ service cloud.firestore {
     function validSubmission() {
       let d = request.resource.data;
       let p = pub();
-      return d.keys().hasOnly(['formId', 'eventId', 'batchId', 'version', 'code', 'customer', 'fulfilment', 'pickupDay', 'paymentProofUrl', 'notes', 'lines', 'submittedAt', 'status'])
+      return d.keys().hasOnly(['formId', 'eventId', 'batchId', 'version', 'code', 'customer', 'fulfilment', 'pickupDay', 'paymentProofUrl', 'notes', 'lines', 'submittedAt', 'status', 'orderType', 'seen', 'createdAt'])
         && d.keys().hasAll(['formId', 'eventId', 'batchId', 'version', 'code', 'customer', 'fulfilment', 'notes', 'lines', 'submittedAt', 'status'])
         && str(d.formId, 40) && p.data.enabled == true
         && d.eventId == p.data.eventId && d.batchId == p.data.batchId
@@ -51,21 +51,38 @@ service cloud.firestore {
         && d.lines is map && d.lines.size() >= 1 && d.lines.size() <= 60
         && d.lines.keys().hasOnly(p.data.items.keys())
         && d.submittedAt is number
-        && d.status == 'new';
+        && d.status == 'new'
+        && (!('orderType' in d) || d.orderType in ['preorder', 'mail_order'])
+        && (!('seen' in d) || (d.seen is map && d.seen.size() <= 60))
+        // Server time, so the importer can apply the price grace period fairly.
+        && (!('createdAt' in d) || d.createdAt == request.time)
+        // The batch dates: no submissions before the opening day or after the closing day.
+        && (!('acceptFrom' in p.data) || request.time.toMillis() >= p.data.acceptFrom)
+        && (!('acceptUntil' in p.data) || request.time.toMillis() <= p.data.acceptUntil);
     }
     match /submissions/{id} {
       allow create: if request.auth != null && validSubmission();
       allow read, update, delete: if isStaff();
     }
 
-    // ---- Logs: append-only immutable audit trail ----
-    match /logs/{id} {
-      allow read, create: if isStaff();
-      allow update, delete: if false;
+    // ---- Public exception 3: the live price list both customer pages read. ----
+    match /publicPrices/{id} {
+      allow read: if true;
+      allow write: if isStaff();
     }
 
-    match /{document=**} {
-      allow read, write: if isStaff();
+    // ---- Append-only collections: logs and price history. ----
+    // Kept out of the catch-all below, because rules that match the same path add up:
+    // a catch-all "write" would otherwise allow updates and deletes here.
+    match /logs/{id} {
+      allow read, create: if isStaff();
+    }
+    match /priceHistory/{id} {
+      allow read, create: if isStaff();
+    }
+
+    match /{collection}/{document=**} {
+      allow read, write: if isStaff() && !(collection in ['logs', 'priceHistory']);
     }
   }
 }

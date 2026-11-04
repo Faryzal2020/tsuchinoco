@@ -60,6 +60,10 @@ Goal: the same level of customization staff used in JotForm, scoped to what the 
 - Transport options, in order of preference: a Cloud Function using a transactional mail API or SMTP (needs Blaze, which this phase assumes); or client-side Gmail API using the staff member's Google sign-in with the `gmail.send` scope, which needs no server but requires the OAuth app to list staff as test users.
 - Optional with Functions: a Firestore trigger that imports submissions into orders server-side, so orders exist even when no staff member has the app open, and a webhook-free replacement for JotForm's email notifications.
 
+## Storefront phase A — orders and prices (built 2026-11-04, branch claude/storefront-phase-a)
+
+Order type, payment and tracking on every order; Orders page opens on Unfulfilled with tabs per order type; price history, live price list and percentage discount; enforced batch dates. See the storefront section of `docs/DATA-MODEL.md`. Phase B (the `/shop/` page and the standing mail-order channel) and phase C (server-side import, order-update e-mails) follow.
+
 ## Later and undecided
 
 - Customer-choice bundles ("any 3 keychains") on the form. Needs a decision on the data model first.

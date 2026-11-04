@@ -1,9 +1,10 @@
 // In-house preorder form: defaults, resolution of the layout against a batch offering, and the
 // published snapshot customers read. Pure functions; Firestore writes live in repo.ts.
 import type {
-  Batch, Event, FormBlock, FormBlockType, FormDoc, FormSettings, FormTheme, Item, Media, OfferingEntry,
-  ProductsSource, PublicBlock, PublicForm, PublicProduct, PublicProductGroup, Settings,
+  Batch, Event, FormBlock, FormBlockType, FormDoc, FormSettings, FormTheme, Item, Media, OfferingEntry, OrderType,
+  ProductsSource, PublicBlock, PublicForm, PublicPrices, PublicProduct, PublicProductGroup, Settings,
 } from '@/types';
+import { catalogPrice, orderTypeForBatch, quote, storefrontOf, type Quote } from './pricing';
 import { DEFAULT_VARIANT_ID, newId, variantKey, variantOf, variantPrice } from './keys';
 import { addDaysIso, formatDate, titleCase } from './format';
 
@@ -42,6 +43,8 @@ export const DEFAULT_FORM_LABELS = {
   orderCode: 'Your confirmation code',
   keepCode: 'Screenshot this page. We will contact you about payment.',
   closedTitle: 'This form is closed',
+  notOpenTitle: 'Not open yet',
+  opensOn: 'Orders open on',
   notFound: 'This form does not exist or has not been published yet.',
   preview: 'Preview. Nothing is sent from this page.',
 } as const;
@@ -232,7 +235,7 @@ export function entryPrice(e: OfferingEntry, item: Item): number {
   return item.kind === 'bundle' ? item.price : variantPrice(item, e.variantId);
 }
 
-function groupsFor(entries: OfferingEntry[], items: Map<string, Item>, media: Map<string, Media>): PublicProductGroup[] {
+function groupsFor(entries: OfferingEntry[], items: Map<string, Item>, media: Map<string, Media>, orderType: OrderType, basis: Record<OrderType, 'po' | 'ots'>): PublicProductGroup[] {
   const groups: PublicProductGroup[] = [];
   const byItem = new Map<string, PublicProductGroup>();
   const thumb = (id?: string) => {
@@ -251,9 +254,11 @@ function groupsFor(entries: OfferingEntry[], items: Map<string, Item>, media: Ma
     }
     const variantId = item.kind === 'bundle' ? undefined : (e.variantId ?? DEFAULT_VARIANT_ID);
     const v = variantOf(item, variantId);
+    const key = offeringKey(e);
+    const q = quote(catalogPrice(item, key), orderType, basis, e.overridePrice);
     const p: PublicProduct = {
-      key: offeringKey(e), itemId: item.id, variantId, name: item.name, variantName: v?.name ?? '',
-      price: entryPrice(e, item), thumb: thumb(v?.thumbnailId),
+      key, itemId: item.id, variantId, name: item.name, variantName: v?.name ?? '',
+      price: q.unitPrice, refPrice: q.refPrice, refLabel: q.refLabel, discountPercent: q.discountPercent, thumb: thumb(v?.thumbnailId),
     };
     g.products.push(p);
   }
@@ -263,9 +268,11 @@ function groupsFor(entries: OfferingEntry[], items: Map<string, Item>, media: Ma
 export function buildPublicForm(form: FormDoc, batch: Batch, event: Event, items: Map<string, Item>, media: Map<string, Media>, settings: Settings, version: number): Omit<PublicForm, 'id'> {
   const blocks: PublicBlock[] = [];
   const pfItems: PublicForm['items'] = {};
+  const orderType = orderTypeForBatch(batch);
+  const basis = storefrontOf(settings).priceBasis;
   for (const b of form.blocks) {
     if (b.type === 'products') {
-      const groups = groupsFor(resolveSource(b.source, batch, items), items, media);
+      const groups = groupsFor(resolveSource(b.source, batch, items), items, media, orderType, basis);
       if (groups.length === 0) continue; // nothing on offer for this block
       for (const g of groups) for (const p of g.products) pfItems[p.key] = { name: p.name, variantName: p.variantName, price: p.price, kind: g.kind };
       blocks.push({ ...b, groups });
@@ -294,7 +301,53 @@ export function buildPublicForm(form: FormDoc, batch: Batch, event: Event, items
     formId: form.id, eventId: event.id, batchId: batch.id, enabled: form.enabled, mode: batch.mode,
     title: form.title, theme: form.theme, labels: form.labels ?? {}, settings: form.settings, currency: settings.currency,
     blocks, items: pfItems, maxQtyPerLine: form.settings.maxQtyPerLine, publishedAt: Date.now(), version,
+    ...acceptWindow(batch),
+    overrides: Object.fromEntries(batch.offering.filter((e) => typeof e.overridePrice === 'number').map((e) => [offeringKey(e), e.overridePrice as number])),
   };
+}
+
+/** The batch dates as an accepting window: from the start of the opening day to the end of the closing day, local time. */
+export function acceptWindow(batch: Pick<Batch, 'opensAt' | 'closesAt'>): { acceptFrom?: number; acceptUntil?: number } {
+  const from = batch.opensAt ? new Date(`${batch.opensAt}T00:00:00`).getTime() : NaN;
+  const until = batch.closesAt ? new Date(`${batch.closesAt}T23:59:59.999`).getTime() : NaN;
+  return { ...(Number.isFinite(from) ? { acceptFrom: from } : {}), ...(Number.isFinite(until) ? { acceptUntil: until } : {}) };
+}
+
+/** 'before' or 'after' when now is outside the form's accepting window. */
+export function windowState(pf: Pick<PublicForm, 'acceptFrom' | 'acceptUntil'>, now = Date.now()): 'before' | 'open' | 'after' {
+  if (typeof pf.acceptFrom === 'number' && now < pf.acceptFrom) return 'before';
+  if (typeof pf.acceptUntil === 'number' && now > pf.acceptUntil) return 'after';
+  return 'open';
+}
+
+/**
+ * Replace the published prices with the live price list. Keys missing from the list keep the
+ * published price and are not reported as seen, so the importer prices them at submission time.
+ */
+export function applyLivePrices(pf: PublicForm, live: PublicPrices | null | undefined): { form: PublicForm; seen: Record<string, string> } {
+  if (!live?.items) return { form: pf, seen: {} };
+  const orderType: OrderType = pf.mode === 'post' ? 'mail_order' : 'preorder';
+  const seen: Record<string, string> = {};
+  const quoted = new Map<string, Quote>();
+  for (const key of Object.keys(pf.items)) {
+    const lp = live.items[key];
+    if (!lp) continue;
+    quoted.set(key, quote(lp, orderType, live.basis ?? storefrontOf({}).priceBasis, pf.overrides?.[key]));
+    seen[key] = lp.entryId;
+  }
+  const items: PublicForm['items'] = {};
+  for (const [key, it] of Object.entries(pf.items)) items[key] = { ...it, price: quoted.get(key)?.unitPrice ?? it.price };
+  const blocks = pf.blocks.map((b) => (!b.groups ? b : {
+    ...b,
+    groups: b.groups.map((g) => ({
+      ...g,
+      products: g.products.map((p) => {
+        const q = quoted.get(p.key);
+        return q ? { ...p, price: q.unitPrice, refPrice: q.refPrice, refLabel: q.refLabel, discountPercent: q.discountPercent } : p;
+      }),
+    })),
+  }));
+  return { form: { ...pf, items, blocks }, seen };
 }
 
 /** Firestore documents are capped at 1 MiB; keep a margin for field names and encoding. */
@@ -323,8 +376,9 @@ export function assertPublicFormFits(pf: Omit<PublicForm, 'id'>): void {
 
 /** Cheap stable hash of what publish would produce, to show "changed since publish". */
 export function formHash(form: FormDoc, batch: Batch, items: Map<string, Item>): string {
-  const offering = batch.offering.map((e) => { const i = items.get(e.itemId); return i ? [offeringKey(e), i.name, variantOf(i, e.variantId)?.name ?? '', entryPrice(e, i), i.thumbnailId ?? '', variantOf(i, e.variantId)?.thumbnailId ?? ''] : null; });
-  const s = JSON.stringify([form.title, form.theme, form.blocks, form.labels, form.settings, form.enabled, batch.mode, offering]);
+  // Catalogue prices are live, so they are not part of the hash; offering overrides and the batch dates are.
+  const offering = batch.offering.map((e) => { const i = items.get(e.itemId); return i ? [offeringKey(e), i.name, variantOf(i, e.variantId)?.name ?? '', e.overridePrice ?? '', i.thumbnailId ?? '', variantOf(i, e.variantId)?.thumbnailId ?? ''] : null; });
+  const s = JSON.stringify([form.title, form.theme, form.blocks, form.labels, form.settings, form.enabled, batch.mode, batch.opensAt, batch.closesAt, offering]);
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
   return (h >>> 0).toString(36);

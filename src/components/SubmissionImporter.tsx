@@ -20,7 +20,7 @@ interface ImporterState {
 const Ctx = createContext<ImporterState | null>(null);
 
 export function ImporterProvider({ children }: { children: React.ReactNode }) {
-  const { submissions, batches, events, itemsById, loaded } = useData();
+  const { submissions, batches, events, itemsById, settings, loaded } = useData();
   const { me } = useAuth();
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -37,7 +37,7 @@ export function ImporterProvider({ children }: { children: React.ReactNode }) {
     setBusy(true);
     for (const s of queue) {
       try {
-        await importSubmission(s.id, { batches, events, itemsById }, me);
+        await importSubmission(s.id, { batches, events, itemsById, settings }, me);
         setErrors((prev) => { if (!(s.id in prev)) return prev; const next = { ...prev }; delete next[s.id]; return next; });
       } catch (e) {
         console.error('[importer]', s.id, e);
@@ -46,7 +46,7 @@ export function ImporterProvider({ children }: { children: React.ReactNode }) {
     }
     running.current = false;
     setBusy(false);
-  }, [pending, errors, me, batches, events, itemsById]);
+  }, [pending, errors, me, batches, events, itemsById, settings]);
 
   // Give the snapshot a moment to settle, then import whatever is new.
   useEffect(() => {

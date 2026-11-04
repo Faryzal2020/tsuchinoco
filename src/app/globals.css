@@ -438,7 +438,10 @@ dialog.modal::backdrop { background: rgba(38, 36, 31, 0.35); }
 .pf-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 8px; }
 .pf-row + .pf-row { border-top: 1px dashed var(--pf-line); margin-top: 8px; }
 .pf-row-name { min-width: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.pf-row-name small, .pf-row-name > .pf-price { flex-basis: 100%; }
+.pf-row-name small, .pf-row-name > .pf-price, .pf-row-name > .pf-price-tag { flex-basis: 100%; }
+.pf-price-tag { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.pf-price-ref { color: var(--pf-muted); font-size: 0.82em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pf-price-off { color: var(--pf-accent); font-size: 0.82em; font-weight: 600; white-space: nowrap; }
 .pf-row-name small:not(.pf-price) { color: var(--pf-muted); }
 .pf-variant-thumb { width: 36px; height: 36px; border-radius: 6px; object-fit: cover; flex: none; }
 /* Stacked (grid) card style, mobile size. --pf-thumb-h is one column's width minus the card padding,
@@ -975,3 +978,8 @@ dialog.modal::backdrop { background: rgba(38, 36, 31, 0.35); }
   height: 0;
   pointer-events: none;
 }
+
+/* Order type label on staff order lists: words first, a soft fill tells the two types apart. */
+.order-type { display: inline-block; font-size: 12px; font-weight: 600; line-height: 1.25; padding: 3px 7px; border-radius: 6px; white-space: nowrap; }
+.order-type-po { background: var(--blue-soft); color: var(--blue-ink); }
+.order-type-mo { background: var(--yellow-soft); color: var(--yellow-ink); }

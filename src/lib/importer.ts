@@ -5,9 +5,11 @@ import { doc, runTransaction } from 'firebase/firestore';
 import { db } from './firebase';
 import { COL, allocateTransactionId, clean, logActivity } from './repo';
 import { expandLines } from './bundle';
-import { entryPrice, offeringKey } from './forms';
-import { DEFAULT_VARIANT_ID, splitKey } from './keys';
-import type { Batch, Event, Item, Order, RawLine, Submission } from '@/types';
+import { offeringKey } from './forms';
+import { DEFAULT_VARIANT_ID, splitKey, variantLabel } from './keys';
+import { catalogPrice, orderTypeForBatch, quote, storefrontOf, type CatalogPrice } from './pricing';
+import { PUBLIC_PRICES_ID } from './prices';
+import type { Batch, Event, Item, Order, OrderType, PublicPrices, RawLine, Settings, Submission } from '@/types';
 
 export type ImportResult = 'imported' | 'rejected' | 'skipped';
 
@@ -15,14 +17,47 @@ export interface ImportContext {
   batches: Batch[];
   events: Event[];
   itemsById: Map<string, Item>;
+  settings: Settings;
+}
+
+/** Server time of the submission when the rules recorded it, else the customer's clock. */
+export function submissionTime(sub: Pick<Submission, 'createdAt' | 'submittedAt'>): number {
+  const c = sub.createdAt as { toMillis?: () => number } | undefined;
+  if (c && typeof c.toMillis === 'function') return c.toMillis();
+  return Number(sub.submittedAt) || Date.now();
 }
 
 const MAX_QTY = 99;
 
-export function rawLinesFromSubmission(lines: Record<string, number>, batch: Batch, itemsById: Map<string, Item>): RawLine[] {
+export interface PricedLines {
+  lines: RawLine[];
+  /** Labels of lines charged at a different price than the customer saw. */
+  changed: string[];
+}
+
+/**
+ * Price each submitted line. Prices never come from the customer. With a live price list:
+ * - the entry the customer saw is charged if it is current, or if it was replaced no more than
+ *   the grace period before the submission (or after it);
+ * - without a seen entry, the entry in force at submission time is charged;
+ * - otherwise the current entry is charged and the line is reported in `changed`.
+ * Without a list (before the first price sync) the catalogue price is used.
+ */
+export function rawLinesFromSubmission(
+  sub: Pick<Submission, 'lines' | 'seen' | 'createdAt' | 'submittedAt'>,
+  batch: Batch,
+  itemsById: Map<string, Item>,
+  live: PublicPrices | null,
+  settings: Pick<Settings, 'storefront'>,
+  orderType: OrderType = orderTypeForBatch(batch),
+): PricedLines {
   const out: RawLine[] = [];
+  const changed: string[] = [];
   const offered = new Map(batch.offering.map((e) => [offeringKey(e), e]));
-  for (const [key, q] of Object.entries(lines ?? {})) {
+  const basis = live?.basis ?? storefrontOf(settings).priceBasis;
+  const graceMs = (live?.graceMinutes ?? storefrontOf(settings).graceMinutes) * 60_000;
+  const at = submissionTime(sub);
+  for (const [key, q] of Object.entries(sub.lines ?? {})) {
     const qty = Math.min(MAX_QTY, Math.round(Number(q)));
     if (!Number.isFinite(qty) || qty <= 0) continue;
     const entry = offered.get(key);
@@ -31,10 +66,27 @@ export function rawLinesFromSubmission(lines: Record<string, number>, batch: Bat
     const item = itemsById.get(itemId);
     if (!item) continue;
     if (!isBundle && variantId !== DEFAULT_VARIANT_ID && !item.variants.some((v) => v.id === variantId)) continue;
-    const unitPrice = entry ? entryPrice(entry, item) : entryPrice({ itemId, variantId }, item);
-    out.push({ itemId, variantId: isBundle ? undefined : variantId, qty, unitPrice, lineTotal: unitPrice * qty });
+    let price: CatalogPrice = catalogPrice(item, key);
+    let priceEntryId: string | undefined;
+    const lp = live?.items?.[key];
+    if (lp) {
+      const seen = sub.seen?.[key];
+      const prevValid = !!lp.prev && at - lp.since <= graceMs;
+      if (seen && seen === lp.entryId) { price = lp; priceEntryId = lp.entryId; }
+      else if (seen && lp.prev && seen === lp.prev.entryId && prevValid) { price = lp.prev; priceEntryId = lp.prev.entryId; }
+      else if (!seen && lp.prev && at < lp.since) { price = lp.prev; priceEntryId = lp.prev.entryId; }
+      else {
+        price = lp; priceEntryId = lp.entryId;
+        if (seen) changed.push(variantLabel(item, variantId ?? DEFAULT_VARIANT_ID));
+      }
+    }
+    const quoted = quote(price, orderType, basis, entry?.overridePrice);
+    out.push({
+      itemId, variantId: isBundle ? undefined : variantId, qty, unitPrice: quoted.unitPrice, lineTotal: quoted.unitPrice * qty,
+      priceEntryId, priceBasis: quoted.basis, discountPercent: quoted.discountPercent, refPrice: quoted.refPrice,
+    });
   }
-  return out;
+  return { lines: out, changed };
 }
 
 export async function importSubmission(subId: string, ctx: ImportContext, by: string): Promise<ImportResult> {
@@ -58,7 +110,10 @@ export async function importSubmission(subId: string, ctx: ImportContext, by: st
       tx.update(subRef, { status: 'rejected', rejectReason: 'Batch or event no longer exists' });
       return 'rejected';
     }
-    const rawLines = rawLinesFromSubmission(sub.lines, batch, ctx.itemsById);
+    const priceSnap = await tx.get(doc(db, COL.publicPrices, PUBLIC_PRICES_ID));
+    const live = priceSnap.exists() ? (priceSnap.data() as PublicPrices) : null;
+    const orderType: OrderType = event.kind === 'store' ? 'mail_order' : orderTypeForBatch(batch);
+    const { lines: rawLines, changed } = rawLinesFromSubmission(sub, batch, ctx.itemsById, live, ctx.settings, orderType);
     if (rawLines.length === 0) {
       tx.update(subRef, { status: 'rejected', rejectReason: 'No valid items on the submission' });
       return 'rejected';
@@ -82,6 +137,8 @@ export async function importSubmission(subId: string, ctx: ImportContext, by: st
         address: (sub.customer?.address ?? '').trim() || undefined,
       },
       fulfilment, status: fulfilment === 'pickup' ? 'awaiting_pickup' : 'awaiting_shipment',
+      orderType, payment: 'unpaid',
+      priceFlag: changed.length > 0 ? `Price changed during checkout: ${changed.join(', ')}. Confirm the total with the customer.` : undefined,
       rawLines, lines: expandLines(rawLines, ctx.itemsById), total: rawLines.reduce((s, l) => s + l.lineTotal, 0),
       notes: (sub.notes ?? '').trim() ? `Customer note: ${sub.notes.trim()}` : '',
       createdAt: now, updatedAt: now, updatedBy: by,

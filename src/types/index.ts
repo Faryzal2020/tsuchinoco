@@ -12,6 +12,8 @@ export interface Variant {
   price?: number;     // specific variant PO price (falls back to item.price)
   otsPrice?: number;  // specific variant OTS price (falls back to item.otsPrice)
   priceJpy?: number;  // optional JPY price (falls back to item.priceJpy)
+  /** Discount in percent (1–99) for this variant; overrides the item's discount. */
+  discountPercent?: number;
   /** media id; overrides the item thumbnail on forms */
   thumbnailId?: string;
 }
@@ -39,6 +41,10 @@ export interface Item {
   price: number;
   otsPrice?: number;
   priceJpy?: number;
+  /** Discount in percent (1–99), applied to preorder and mail-order prices. */
+  discountPercent?: number;
+  /** False hides the item from mail order. Absent means sellable by mail order. */
+  mailOrder?: boolean;
   cost?: number;
   producedAt: string;
   active: boolean;
@@ -63,6 +69,8 @@ export interface Staff {
 }
 
 export type EventStatus = 'upcoming' | 'wrapped';
+/** `store` is the standing mail-order channel; it never wraps and skips planning. */
+export type EventKind = 'event' | 'store';
 
 export interface Event {
   id: string;
@@ -73,6 +81,7 @@ export interface Event {
   endDate: string;
   venue: string;
   status: EventStatus;
+  kind?: EventKind;
   pickupDeadlineDays: number;
   notes: string;
   createdAt: number;
@@ -143,7 +152,12 @@ export interface Batch {
 }
 
 export type Fulfilment = 'pickup' | 'mail';
-export type OrderSource = 'jotform' | 'manual' | 'web';
+export type OrderSource = 'jotform' | 'manual' | 'web' | 'store';
+/** What the customer asked for: a preorder for one event, or a regular mail order. */
+export type OrderType = 'preorder' | 'mail_order';
+export type PaymentStatus = 'unpaid' | 'paid';
+/** Which catalogue price a line was charged from. */
+export type PriceBasis = 'po' | 'ots' | 'override';
 export type OrderStatus =
   | 'awaiting_pickup'
   | 'collected'
@@ -162,6 +176,12 @@ export interface RawLine {
   lineTotal: number;
   /** If this line is a bundle, map of component itemId -> chosen variantId */
   bundleSelections?: Record<string, string>;
+  /** Price history entry the unit price came from. Absent on orders made before price history. */
+  priceEntryId?: string;
+  priceBasis?: PriceBasis;
+  discountPercent?: number;
+  /** The struck-through price the customer saw next to unitPrice, if any. */
+  refPrice?: number;
 }
 
 export interface OrderLine {
@@ -185,6 +205,17 @@ export interface Order {
   customer: { name: string; email: string; phone: string; address?: string };
   fulfilment: Fulfilment;
   status: OrderStatus;
+  /** Absent on orders made before order types; see orderTypeOf in lib/orders.ts. */
+  orderType?: OrderType;
+  /** Absent on orders made before payment tracking; see paymentOf in lib/orders.ts. */
+  payment?: PaymentStatus;
+  paidAt?: number;
+  paidBy?: string;
+  tracking?: { courier: string; number: string; url?: string };
+  /** A mail order shipped before the event it waits for ended, released by staff. */
+  holdReleased?: boolean;
+  /** Set by the importer when the price charged differs from the one the customer saw. */
+  priceFlag?: string;
   rawLines: RawLine[];
   lines: OrderLine[];
   total: number;
@@ -355,6 +386,10 @@ export interface PublicProduct {
   name: string;
   variantName: string;
   price: number;
+  /** Struck-through reference price shown next to price, e.g. the OTS price on a preorder. */
+  refPrice?: number;
+  refLabel?: string;
+  discountPercent?: number;
   thumb?: string;
 }
 
@@ -387,6 +422,11 @@ export interface PublicForm {
   /** Every orderable key with the data the import and the rules need. */
   items: Record<string, { name: string; variantName: string; price: number; kind: ItemKind }>;
   maxQtyPerLine: number;
+  /** Accepting window in ms since epoch, from the batch dates. The rules check them against server time. */
+  acceptFrom?: number;
+  acceptUntil?: number;
+  /** Offering price overrides per key; live prices come from publicPrices/current. */
+  overrides?: Record<string, number>;
   publishedAt: number;
   version: number;
 }
@@ -403,10 +443,15 @@ export interface Submission {
   code: string;
   customer: { name: string; email: string; phone: string; address?: string };
   fulfilment: Fulfilment;
+  orderType?: OrderType;
   pickupDay?: string;
   paymentProofUrl?: string;
   notes: string;
   lines: Record<string, number>;
+  /** Price entry id the customer saw per line key. */
+  seen?: Record<string, string>;
+  /** Server time of the write, enforced by the rules. A Firestore Timestamp when read. */
+  createdAt?: unknown;
   submittedAt: number;
   status: SubmissionStatus;
   orderId?: string;
@@ -426,6 +471,64 @@ export interface EmailTemplate {
   updatedAt?: number;
 }
 
+// ---- Prices ----
+
+/** One price as it was set at a point in time. Create-only; a correction is a new entry. */
+export interface PriceEntry {
+  id: string;
+  itemId: string;
+  /** Variant key for products, item id for bundles. */
+  key: string;
+  po: number;
+  ots: number;
+  discountPercent?: number;
+  effectiveFrom: number;
+  by: string;
+  note?: string;
+}
+
+export interface LivePrice {
+  entryId: string;
+  po: number;
+  ots: number;
+  discountPercent?: number;
+  /** When this entry became current. */
+  since: number;
+  /** The entry it replaced, kept for the checkout grace period. */
+  prev?: { entryId: string; po: number; ots: number; discountPercent?: number };
+}
+
+/** publicPrices/current: the live price list both customer pages read. Public. */
+export interface PublicPrices {
+  basis: Record<OrderType, 'po' | 'ots'>;
+  graceMinutes: number;
+  items: Record<string, LivePrice>;
+  updatedAt: number;
+}
+
+export interface Courier {
+  name: string;
+  /** Tracking link with {number} where the tracking number goes. */
+  trackingUrl?: string;
+}
+
+export interface StorefrontSettings {
+  priceBasis: Record<OrderType, 'po' | 'ots'>;
+  graceMinutes: number;
+  couriers: Courier[];
+}
+
+export const DEFAULT_STOREFRONT: StorefrontSettings = {
+  priceBasis: { preorder: 'po', mail_order: 'ots' },
+  graceMinutes: 60,
+  couriers: [
+    { name: 'JNE' },
+    { name: 'J&T Express' },
+    { name: 'SiCepat' },
+    { name: 'Pos Indonesia' },
+  ],
+};
+
 export interface Settings {
   currency: string;
   itemTypes: string[];
@@ -435,6 +538,7 @@ export interface Settings {
   resendFromName?: string;
   resendReplyTo?: string;
   emailTemplates?: EmailTemplate[];
+  storefront?: StorefrontSettings;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -467,6 +571,7 @@ export type LogAction =
 
 export type LogEntityType =
   | 'item'
+  | 'price'
   | 'event'
   | 'batch'
   | 'order'

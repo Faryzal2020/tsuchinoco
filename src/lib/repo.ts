@@ -2,6 +2,7 @@
 import {
   collection,
   deleteDoc,
+  deleteField,
   doc,
   FieldPath,
   getDoc,
@@ -20,8 +21,10 @@ import { deleteObject, ref } from 'firebase/storage';
 import { db, storage } from './firebase';
 import { newId } from './keys';
 import { transactionId } from './forms';
+import { orderTypeOf, paymentOf } from './orders';
+import { syncPriceList } from './prices';
 import type {
-  Batch, Counter, Event, FieldChange, FormDoc, FormTemplate, Item, LogAction, LogEntityType, Media, Order, OrderStatus, PublicForm, Settings, Staff, StockMovement, Submission, ThemePresetDoc, Wrapup,
+  Batch, Counter, Event, FieldChange, FormDoc, FormTemplate, Item, LogAction, LogEntityType, Media, Order, OrderStatus, PaymentStatus, PublicForm, Settings, Staff, StockMovement, Submission, ThemePresetDoc, Wrapup,
 } from '@/types';
 
 export const COL = {
@@ -41,6 +44,8 @@ export const COL = {
   templates: 'formTemplates',
   themePresets: 'themePresets',
   logs: 'logs',
+  priceHistory: 'priceHistory',
+  publicPrices: 'publicPrices',
 } as const;
 
 type Meta = { createdAt: number; updatedAt: number; updatedBy: string };
@@ -210,10 +215,21 @@ export const staffRepo = {
 };
 
 // ---- Items ----
+/** After any catalogue write: record price changes and update the live price list. */
+async function afterItemWrite(by: string, ids?: string[]) {
+  try {
+    await syncPriceList(by, ids);
+  } catch (e) {
+    console.error('[prices]', e);
+    throw new Error(`Saved, but the live price list could not be updated (${e instanceof Error ? e.message : 'unknown error'}). Customers still see the old price.`);
+  }
+}
+
 export const itemRepo = {
   create: async (data: Omit<Item, 'id' | keyof Meta>, by: string, id?: string) => {
     const newIdVal = await create<Item>(COL.items, data, by, id);
     await logActivity('create', 'item', `Created item "${data.name}"`, by, { entityId: newIdVal, entityName: data.name });
+    await afterItemWrite(by, [newIdVal]);
     return newIdVal;
   },
   patch: async (id: string, data: Partial<Item>, by: string) => {
@@ -231,6 +247,7 @@ export const itemRepo = {
       entityName: itemName,
       changes,
     });
+    await afterItemWrite(by, [id]);
   },
   remove: async (id: string, by: string = 'staff') => {
     const ref = doc(db, COL.items, id);
@@ -241,16 +258,19 @@ export const itemRepo = {
       entityId: id,
       entityName: itemName,
     });
+    await afterItemWrite(by, [id]);
   },
   bulkCreate: async (rows: Omit<Item, 'id' | keyof Meta>[], by: string) => {
     const chunks: typeof rows[] = [];
     for (let i = 0; i < rows.length; i += 400) chunks.push(rows.slice(i, i + 400));
+    const ids: string[] = [];
     for (const chunk of chunks) {
       const b = writeBatch(db);
-      for (const r of chunk) b.set(doc(db, COL.items, newId()), clean({ ...r, ...stamp(by) }));
+      for (const r of chunk) { const id = newId(); ids.push(id); b.set(doc(db, COL.items, id), clean({ ...r, ...stamp(by) })); }
       await b.commit();
     }
     await logActivity('bulk_create', 'item', `Imported / created ${rows.length} catalogue items`, by);
+    await afterItemWrite(by, ids);
   },
   bulkPatch: async (ids: string[], patchData: Partial<Item>, by: string) => {
     for (let i = 0; i < ids.length; i += 400) {
@@ -263,6 +283,7 @@ export const itemRepo = {
     }
     const fields = Object.keys(patchData).filter((k) => k !== 'updatedAt' && k !== 'updatedBy').join(', ');
     await logActivity('bulk_update', 'item', `Bulk updated ${ids.length} items: ${fields}`, by);
+    await afterItemWrite(by, ids);
   },
   bulkRemove: async (ids: string[], by: string) => {
     for (let i = 0; i < ids.length; i += 400) {
@@ -272,6 +293,7 @@ export const itemRepo = {
       await b.commit();
     }
     await logActivity('bulk_delete', 'item', `Deleted ${ids.length} selected items`, by);
+    await afterItemWrite(by, ids);
   },
   clearAll: async (by: string) => {
     const snap = await getDocs(collection(db, COL.items));
@@ -283,6 +305,7 @@ export const itemRepo = {
       await b.commit();
     }
     await logActivity('clear', 'item', `Cleared all ${count} items from catalogue`, by);
+    await afterItemWrite(by);
   },
 };
 
@@ -418,6 +441,13 @@ export const orderRepo = {
   setStatus: async (o: Order, status: OrderStatus, by: string, extra: Partial<Order> = {}) => {
     const now = Date.now();
     const data: Partial<Order> = { status, ...extra };
+    // Picked up and delivered both need a paid order; delivered also needs a tracking number.
+    if ((status === 'collected' || status === 'shipped') && paymentOf({ ...o, ...extra }) !== 'paid') {
+      throw new Error('Mark the order paid first.');
+    }
+    if (status === 'shipped' && !(extra.tracking ?? o.tracking)?.number?.trim()) {
+      throw new Error('Enter a tracking number to mark the order delivered.');
+    }
     if (status === 'collected') data.collectedAt = now;
     if (status === 'shipped') data.shippedAt = now;
     if (status === 'cancelled') data.cancelledAt = now;
@@ -444,7 +474,38 @@ export const orderRepo = {
       changes,
     });
   },
+  /** Mark paid or back to unpaid. Takes several orders so the Orders page can bulk-mark. */
+  setPayment: async (orders: Order[], payment: PaymentStatus, by: string) => {
+    const now = Date.now();
+    for (let i = 0; i < orders.length; i += 400) {
+      const b = writeBatch(db);
+      for (const o of orders.slice(i, i + 400)) {
+        b.update(doc(db, COL.orders, o.id), payment === 'paid'
+          ? { payment, paidAt: now, paidBy: by, ...touch(by) }
+          : { payment, paidAt: deleteField(), paidBy: deleteField(), ...touch(by) });
+      }
+      await b.commit();
+    }
+    const one = orders.length === 1 ? orders[0] : undefined;
+    await logActivity('status_change', 'order', one ? `Marked order ${payment}` : `Marked ${orders.length} orders ${payment}`, by, {
+      entityId: one?.id,
+      entityName: one?.transactionId,
+      changes: one ? [{ field: 'payment', before: paymentOf(one), after: payment }] : undefined,
+    });
+  },
+  releaseHold: async (orders: Order[], by: string) => {
+    for (let i = 0; i < orders.length; i += 400) {
+      const b = writeBatch(db);
+      for (const o of orders.slice(i, i + 400)) b.update(doc(db, COL.orders, o.id), { holdReleased: true, ...touch(by) });
+      await b.commit();
+    }
+    await logActivity('update', 'order', `Released the mail-order hold on ${orders.length} ${orders.length === 1 ? 'order' : 'orders'}`, by, {
+      entityId: orders.length === 1 ? orders[0].id : undefined,
+      entityName: orders.length === 1 ? orders[0].transactionId : undefined,
+    });
+  },
   bulkSetStatus: async (orders: Order[], status: OrderStatus, by: string) => {
+    if (status === 'collected' && orders.some((o) => paymentOf(o) !== 'paid')) throw new Error('Some selected orders are unpaid. Mark them paid first.');
     for (let i = 0; i < orders.length; i += 200) {
       const b = writeBatch(db);
       const now = Date.now();
@@ -456,6 +517,22 @@ export const orderRepo = {
       await b.commit();
     }
     await logActivity('status_change', 'order', `Bulk updated ${orders.length} orders status to ${status}`, by);
+  },
+  /** One-off: write orderType and payment onto orders made before they existed. Returns how many changed. */
+  backfillTypes: async (batches: Batch[], events: Event[], by: string): Promise<number> => {
+    const snap = await getDocs(collection(db, COL.orders));
+    const batchById = new Map(batches.map((b) => [b.id, b]));
+    const eventById = new Map(events.map((e) => [e.id, e]));
+    const todo = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Order, 'id'>) })).filter((o) => !o.orderType || !o.payment);
+    for (let i = 0; i < todo.length; i += 400) {
+      const b = writeBatch(db);
+      for (const o of todo.slice(i, i + 400)) {
+        b.update(doc(db, COL.orders, o.id), { orderType: orderTypeOf(o, batchById.get(o.batchId), eventById.get(o.eventId)), payment: paymentOf(o) });
+      }
+      await b.commit();
+    }
+    if (todo.length > 0) await logActivity('bulk_update', 'order', `Backfilled order type and payment on ${todo.length} orders`, by);
+    return todo.length;
   },
   listForEvent: async (eventId: string): Promise<Order[]> => {
     const snap = await getDocs(query(collection(db, COL.orders), where('eventId', '==', eventId)));
