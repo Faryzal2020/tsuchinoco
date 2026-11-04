@@ -16,9 +16,10 @@ import { transactionId } from '../../src/lib/forms';
 import { emailRef, emailsDue, NOTIFICATION_TYPES, notificationsOf, orderEmailVars, renderEmail, templateFor } from '../../src/lib/orderEmail';
 import type { Batch, Event, Item, NotificationType, Order, OrderEmail, PublicPrices, Settings, Submission } from '../../src/types';
 
-// Firestore triggers must run in the database's region. Set FIRESTORE_REGION in functions/.env if
-// the database is not in asia-southeast1; a mismatch makes the deploy fail with a clear message.
-const TRIGGER_REGION = process.env.FIRESTORE_REGION || 'asia-southeast1';
+// Firestore triggers must run in the database's region: the (default) database is in
+// asia-southeast2 (Jakarta). The callables in this codebase run in asia-southeast1.
+// FIRESTORE_REGION in functions/.env overrides it.
+const TRIGGER_REGION = process.env.FIRESTORE_REGION || 'asia-southeast2';
 const SYSTEM = 'system';
 
 const db = () => getFirestore();
