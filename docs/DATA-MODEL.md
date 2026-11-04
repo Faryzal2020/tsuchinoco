@@ -351,3 +351,11 @@ Design: https://claude.ai/artifact/Rr9Gkay3xdr4oYD7cVWtq6
 
 `/sandbox/` runs the real Orders and Storefront staff pages and the shop on sample data (`src/components/sandbox/fixtures.ts`) with a fake signed-in staff member, and swaps the Firestore writes those pages use for in-memory ones. Its files are named `*.dev.tsx`, which `next.config.ts` treats as routes only under `next dev`, so production builds never include it; it also refuses to run off localhost. Reloading resets the data.
 
+## Storefront phase C: server import and order e-mails (2026-11-04)
+
+- **Server-side import**: `importSubmissionOnCreate` (`functions/src/orders.ts`) turns each new submission into an order as it arrives. It runs the same pure code as the browser (`src/lib/importCore.ts`: line pricing with the grace period, the order document, mail-order month batches) inside one transaction. The staff browser's importer is now a fallback for submissions still `new` after 2 minutes; whichever runs first wins.
+- **Order e-mails**: `orderEmailsOnWrite` sends an e-mail when an order is created from a Form or the storefront (`received`), marked paid (`paid`) or marked delivered (`delivered`), if that update is switched on in `settings.notifications.<type>` (`{ on, templateId? }`, all off by default). Templates are the built-in text or one from Settings › Emails; placeholders are listed in `PLACEHOLDERS` (`src/lib/orderEmail.ts`). Sending uses the Resend key and sender already set for broadcasts.
+- **`orders.emails[]`**: `{ type, to, at, ok, id?, error?, skipped?, ref, by? }`, one per attempt. `ref` is the change's timestamp (`createdAt`, `paidAt`, `shippedAt`) so a retried trigger never sends twice. **`orders.skipEmail`** is written with a status change to skip that change's e-mail once (the Delivered dialog's checkbox); the function clears it.
+- **`resendOrderEmail`** (callable, staff only): "Send again" from the order view; records the attempt with `by`.
+- **Build**: the functions compile with `rootDir: ".."` so they include the shared modules; the entry point is `functions/lib/functions/src/index.js`. Shared modules import values by relative path (types via `@/types` are erased). Firestore triggers deploy to `FIRESTORE_REGION` from `functions/.env` (default `asia-southeast1`), which must match the database location.
+

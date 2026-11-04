@@ -17,6 +17,7 @@ import type { Media } from '@/types';
 import Button from '@/components/ui/Button';
 import { Checkbox, Field, Input } from '@/components/ui/Field';
 import StorefrontPanel from '@/components/settings/StorefrontPanel';
+import NotificationsPanel from '@/components/settings/NotificationsPanel';
 import { PageHeader, Panel, Pill, TableWrap } from '@/components/ui/Bits';
 
 export default function SettingsPage() {
@@ -105,6 +106,8 @@ export default function SettingsPage() {
           </Panel>
 
           <StorefrontPanel />
+
+          <NotificationsPanel />
 
           <CloudStoragePanel usage={usage} />
 

@@ -1,7 +1,7 @@
 // Every price a customer is charged is worked out here: the staff app, the customer form and the
 // importer all call quote(). Pure functions only; Firestore writes for the price list are in prices.ts.
 import type { Batch, Item, OrderType, PriceBasis, Settings, StorefrontSettings } from '@/types';
-import { DEFAULT_STOREFRONT } from '@/types';
+import { DEFAULT_STOREFRONT } from '../types';
 import { splitKey, variantKey, variantOf, variantOtsPrice, variantPrice, variantsOf } from './keys';
 
 export const storefrontOf = (s: Pick<Settings, 'storefront'>): StorefrontSettings => ({

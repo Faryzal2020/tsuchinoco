@@ -10,7 +10,7 @@ import type { Event, Order } from '@/types';
 import Button from '@/components/ui/Button';
 import { Field, Input, Textarea } from '@/components/ui/Field';
 import { Kv, Pill } from '@/components/ui/Bits';
-import { DeliverDialog, OrderStagePill, OrderTypeCell } from '@/components/orders/OrderBits';
+import { DeliverDialog, EmailLog, OrderStagePill, OrderTypeCell } from '@/components/orders/OrderBits';
 import { holdOf, ORDER_STATUS_LABELS, orderTypeOf, paymentOf } from '@/lib/orders';
 import { Modal } from '@/components/ui/Dialog';
 import { useVariantLabel } from '@/components/VariantSelect';
@@ -181,6 +181,8 @@ export default function OrderModal({ order: o, event, onClose }: { order: Order 
               <div className="flex gap-2 justify-end"><Button size="sm" onClick={() => setEdit(false)}>Cancel</Button><Button size="sm" variant="primary" busy={busy} onClick={saveCustomer}>Save</Button></div>
             </div>
           )}
+
+          <EmailLog order={o} />
 
           {o.status === 'not_collected' && (
             <div className="mt-4 rounded-lg border border-line p-3">

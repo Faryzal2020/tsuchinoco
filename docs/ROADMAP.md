@@ -68,6 +68,10 @@ Order type, payment and tracking on every order; Orders page opens on Unfulfille
 
 `/shop/` with search, filters, cart and checkout; staff Storefront page (state and reasons, mail-order switch and override, listed preorders, shop text, publish); standing mail-order channel with monthly batches; login-free `/sandbox/` for localhost. Phase C next: server-side import and order-update e-mails.
 
+## Storefront phase C — server import and order e-mails (built 2026-11-04, branch claude/storefront-phase-c)
+
+Submissions become orders on the server within seconds; the browser importer is a 2-minute fallback. Order-update e-mails (received, paid, delivered with tracking) with switches and templates in Settings, a skip checkbox in the Delivered dialog, an e-mail log and "Send again" on each order.
+
 ## Later and undecided
 
 - Customer-choice bundles ("any 3 keychains") on the form. Needs a decision on the data model first.

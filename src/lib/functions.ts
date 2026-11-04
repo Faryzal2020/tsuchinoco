@@ -2,6 +2,7 @@
 import { httpsCallable } from 'firebase/functions';
 import { functions } from './firebase';
 import type { UsageReport } from './usage';
+import type { NotificationType, OrderEmail } from '@/types';
 
 const call = <Req, Res>(name: string) => async (data: Req): Promise<Res> => {
   const fn = httpsCallable<Req, Res>(functions, name);
@@ -47,4 +48,7 @@ export const fx = {
   >('sendBroadcastEmail'),
 
   usageMetrics: call<Record<string, never>, UsageReport>('usageMetrics'),
+
+  /** "Send again" for one order-update e-mail. Records the attempt on the order. */
+  resendOrderEmail: call<{ orderId: string; type: NotificationType }, OrderEmail>('resendOrderEmail'),
 };

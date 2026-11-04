@@ -2,9 +2,13 @@
   "compilerOptions": {
     "module": "commonjs",
     "target": "es2022",
-    "lib": ["es2022"],
+    "lib": ["es2022", "dom"],
     "outDir": "lib",
-    "rootDir": "src",
+    // The functions share pure modules with the web app (src/lib/importCore.ts, orderEmail.ts and
+    // what they import), so the root is the repository and the entry compiles to lib/functions/src.
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["src/*"] },
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,

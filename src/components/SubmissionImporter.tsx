@@ -1,11 +1,16 @@
 'use client';
 
-// While any staff member has the app open, new customer submissions are turned into orders.
+// The Cloud Function turns new submissions into orders as they arrive. This is the fallback: while
+// a staff member has the app open, any submission still new after FALLBACK_AFTER_MS is imported
+// here (same code, same transaction, so it can never be imported twice).
 // Exposes the queue state so the Orders page can show progress and failures.
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { useData } from '@/lib/data';
-import { importSubmission } from '@/lib/importer';
+import { importSubmission, submissionTime } from '@/lib/importer';
+
+/** Give the server this long before the browser steps in. */
+export const FALLBACK_AFTER_MS = 2 * 60_000;
 import type { Submission } from '@/types';
 
 interface ImporterState {
@@ -24,14 +29,17 @@ export function ImporterProvider({ children }: { children: React.ReactNode }) {
   const { me } = useAuth();
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [tick, setTick] = useState(0);
   const running = useRef(false);
+  useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 30_000); return () => clearInterval(t); }, []);
 
   const pending = useMemo(() => submissions.filter((s) => s.status === 'new'), [submissions]);
   const rejected = useMemo(() => submissions.filter((s) => s.status === 'rejected'), [submissions]);
 
   const run = useCallback(async (force: boolean) => {
     if (running.current || !me) return;
-    const queue = pending.filter((s) => force || !errors[s.id]);
+    const cutoff = Date.now() - FALLBACK_AFTER_MS;
+    const queue = pending.filter((s) => force || (!errors[s.id] && submissionTime(s) <= cutoff));
     if (queue.length === 0) return;
     running.current = true;
     setBusy(true);
@@ -53,7 +61,7 @@ export function ImporterProvider({ children }: { children: React.ReactNode }) {
     if (!loaded || pending.length === 0) return;
     const t = setTimeout(() => { void run(false); }, 600);
     return () => clearTimeout(t);
-  }, [loaded, pending, run]);
+  }, [loaded, pending, run, tick]);
 
   const value = useMemo<ImporterState>(() => ({ pending, rejected, busy, errors, importNow: () => run(true) }), [pending, rejected, busy, errors, run]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

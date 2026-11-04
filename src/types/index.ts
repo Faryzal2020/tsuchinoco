@@ -220,6 +220,10 @@ export interface Order {
   holdReleased?: boolean;
   /** Set by the importer when the price charged differs from the one the customer saw. */
   priceFlag?: string;
+  /** Order-update e-mails sent (or attempted) for this order, oldest first. */
+  emails?: OrderEmail[];
+  /** Written with a status change to skip that change's automatic e-mail once. Cleared by the function. */
+  skipEmail?: NotificationType[];
   rawLines: RawLine[];
   lines: OrderLine[];
   total: number;
@@ -511,6 +515,32 @@ export interface PublicPrices {
   updatedAt: number;
 }
 
+// ---- Order-update e-mails ----
+
+export type NotificationType = 'received' | 'paid' | 'delivered';
+
+export interface NotificationSetting {
+  on: boolean;
+  /** An e-mail template id from Settings › Emails; absent = the built-in text. */
+  templateId?: string;
+}
+
+export interface OrderEmail {
+  type: NotificationType;
+  to: string;
+  at: number;
+  ok: boolean;
+  /** Resend message id when sent. */
+  id?: string;
+  error?: string;
+  /** Skipped by staff in the dialog, or switched off. */
+  skipped?: boolean;
+  /** The timestamp of the change it was for (createdAt, paidAt, shippedAt); stops double sends. */
+  ref?: number;
+  /** Staff member who pressed "Send again"; absent for automatic e-mails. */
+  by?: string;
+}
+
 export interface Courier {
   name: string;
   /** Tracking link with {number} where the tracking number goes. */
@@ -619,6 +649,7 @@ export interface Settings {
   resendReplyTo?: string;
   emailTemplates?: EmailTemplate[];
   storefront?: StorefrontSettings;
+  notifications?: Partial<Record<NotificationType, NotificationSetting>>;
 }
 
 export const DEFAULT_SETTINGS: Settings = {

@@ -984,3 +984,8 @@ dialog.modal::backdrop { background: rgba(38, 36, 31, 0.35); }
 .order-type { display: inline-block; font-size: 12px; font-weight: 600; line-height: 1.25; padding: 3px 7px; border-radius: 6px; white-space: nowrap; }
 .order-type-po { background: var(--blue-soft); color: var(--blue-ink); }
 .order-type-mo { background: var(--yellow-soft); color: var(--yellow-ink); }
+
+/* E-mail previews: restore the paragraph and table spacing mail clients use. */
+.email-preview p { margin: 0 0 10px; }
+.email-preview table { margin: 0 0 10px; }
+.email-preview a { color: var(--blue-ink); text-decoration: underline; }

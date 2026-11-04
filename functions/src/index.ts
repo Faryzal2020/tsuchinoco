@@ -29,6 +29,9 @@ function loadEnvFile(filePath: string) {
 }
 
 // Check local .env files in functions dir or root project dir
+// Compiled to lib/functions/src/, so the functions folder is three levels up from here.
+loadEnvFile(path.resolve(__dirname, '../../../.env.local'));
+loadEnvFile(path.resolve(__dirname, '../../../.env'));
 loadEnvFile(path.resolve(__dirname, '../.env.local'));
 loadEnvFile(path.resolve(__dirname, '../.env'));
 loadEnvFile(path.resolve(__dirname, '../../.env.local'));
@@ -358,3 +361,6 @@ export const usageMetrics = onCall({ invoker: 'public', cors: true }, async (req
     errors,
   };
 });
+
+// ---- Orders: server-side import and order-update e-mails (storefront phase C) ----
+export { importSubmissionOnCreate, orderEmailsOnWrite, resendOrderEmail } from './orders';

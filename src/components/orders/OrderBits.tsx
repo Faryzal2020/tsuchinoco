@@ -9,10 +9,13 @@ import { orderRepo } from '@/lib/repo';
 import { storefrontOf } from '@/lib/pricing';
 import { holdOf, orderTypeOf, stageOf, trackingUrlFor, typeLabelOf } from '@/lib/orders';
 import { eventCode } from '@/lib/forms';
-import { formatDate } from '@/lib/format';
-import type { Order } from '@/types';
+import { formatDate, formatDateTime } from '@/lib/format';
+import { fx } from '@/lib/functions';
+import { NOTIFICATION_LABELS, notificationsOf } from '@/lib/orderEmail';
+import { paymentOf } from '@/lib/orders';
+import type { NotificationType, Order } from '@/types';
 import Button from '@/components/ui/Button';
-import { Field, Input, Select } from '@/components/ui/Field';
+import { Checkbox, Field, Input, Select } from '@/components/ui/Field';
 import { Pill } from '@/components/ui/Bits';
 import { Modal } from '@/components/ui/Dialog';
 
@@ -42,13 +45,16 @@ export function DeliverDialog({ order, open, onClose }: { order: Order | null; o
   const [courier, setCourier] = useState('');
   const [other, setOther] = useState('');
   const [number, setNumber] = useState('');
+  const [notify, setNotify] = useState(true);
   const [busy, setBusy] = useState(false);
+  const notifyOn = notificationsOf(settings).delivered.on;
 
   useEffect(() => {
     if (!open || !order) return;
     setCourier(order.tracking?.courier && couriers.some((c) => c.name === order.tracking?.courier) ? order.tracking.courier : couriers[0]?.name ?? '__other');
     setOther(order.tracking?.courier && !couriers.some((c) => c.name === order.tracking?.courier) ? order.tracking.courier : '');
     setNumber(order.tracking?.number ?? '');
+    setNotify(true);
   }, [open, order]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!order) return null;
@@ -61,7 +67,12 @@ export function DeliverDialog({ order, open, onClose }: { order: Order | null; o
     setBusy(true);
     const url = trackingUrlFor(couriers, courierName, number);
     const ok = await run(
-      () => orderRepo.setStatus(order, 'shipped', me, { tracking: { courier: courierName, number: number.trim(), ...(url ? { url } : {}) }, ...(held ? { holdReleased: true } : {}) }),
+      () => orderRepo.setStatus(order, 'shipped', me, {
+        tracking: { courier: courierName, number: number.trim(), ...(url ? { url } : {}) },
+        ...(held ? { holdReleased: true } : {}),
+        // The e-mail is sent by the server when it sees the order delivered; this skips it once.
+        ...(notifyOn && !notify ? { skipEmail: ['delivered'] } : {}),
+      }),
       'Delivered, stock updated',
     );
     setBusy(false);
@@ -86,7 +97,51 @@ export function DeliverDialog({ order, open, onClose }: { order: Order | null; o
         </Field>
         {courier === '__other' && <Field label="Courier name"><Input value={other} onChange={(e) => setOther(e.target.value)} /></Field>}
         <Field label="Tracking number"><Input value={number} onChange={(e) => setNumber(e.target.value)} className="mono" autoFocus /></Field>
+        {!notifyOn ? <p className="hint">Delivery e-mails are switched off in Settings.</p>
+          : !order.customer.email ? <p className="hint">No e-mail address on this order, so no tracking e-mail is sent.</p>
+          : <Checkbox label={`E-mail ${order.customer.name} the tracking number`} checked={notify} onChange={(e) => setNotify(e.target.checked)} />}
       </div>
     </Modal>
+  );
+}
+
+const SEND_LABELS: Record<NotificationType, string> = { received: 'Send order confirmation', paid: 'Send payment confirmation', delivered: 'Send tracking e-mail' };
+
+/** Order-update e-mails sent for an order, newest first, with "Send again". */
+export function EmailLog({ order }: { order: Order }) {
+  const { run } = useToast();
+  const [busy, setBusy] = useState<NotificationType | ''>('');
+  const log = [...(order.emails ?? [])].sort((a, b) => b.at - a.at);
+  const sendable: NotificationType[] = ['received', ...(paymentOf(order) === 'paid' ? ['paid' as const] : []), ...(order.status === 'shipped' ? ['delivered' as const] : [])];
+  const send = async (type: NotificationType) => {
+    setBusy(type);
+    await run(async () => {
+      const r = await fx.resendOrderEmail({ orderId: order.id, type });
+      if (!r.ok) throw new Error(r.error || 'The e-mail was not sent.');
+    }, 'E-mail sent');
+    setBusy('');
+  };
+  return (
+    <div className="mt-4 rounded-lg border border-line p-3">
+      <h4 className="font-bold text-sm">E-mails to the customer</h4>
+      {log.length === 0 ? <p className="hint">None sent yet.</p> : (
+        <ul className="mt-1 grid gap-1 text-sm">
+          {log.map((e, i) => (
+            <li key={i}>
+              <span className="font-semibold">{NOTIFICATION_LABELS[e.type].title}</span>
+              <span className="hint"> · {formatDateTime(e.at)}{e.by ? ' · sent again by staff' : ''}</span>
+              <span className="block">{e.skipped ? <span className="text-ink-2">Skipped by staff</span> : e.ok ? <span className="text-ink-2">Sent to {e.to}</span> : <span className="text-red-ink">Not sent: {e.error}</span>}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-2 flex flex-wrap gap-2">
+        {sendable.map((t) => (
+          <Button key={t} size="sm" busy={busy === t} disabled={!order.customer.email} title={!order.customer.email ? 'No e-mail address on this order' : undefined} onClick={() => send(t)}>
+            {SEND_LABELS[t]}
+          </Button>
+        ))}
+      </div>
+    </div>
   );
 }

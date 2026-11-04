@@ -70,12 +70,16 @@ export function makeSandbox(): SandboxState {
     order({ id: 'o4', eventId: 'cf24', batchId: 'cf24b1', transactionId: 'CF24_1_0004', customer: c('Laras Wening'), fulfilment: 'pickup', pickupDay: 'Day 1', status: 'awaiting_pickup', orderType: 'preorder', payment: 'unpaid', source: 'store', priceFlag: 'Price changed during checkout: Kitsune Shrine Acrylic Standee · 20 cm. Confirm the total with the customer.', rawLines: [line('standee', '20', 1, 90000)], submittedAt: Date.now() - 6 * 3_600_000 }),
     order({ id: 'o5', eventId: 'cf23', batchId: 'cf23b3', transactionId: 'CF23_3_0012', customer: c('Sari Wulandari', 'Jl. Kenanga 4, Yogyakarta 55281'), fulfilment: 'mail', status: 'awaiting_shipment', orderType: 'mail_order', payment: 'paid', paidAt: Date.now() - 9 * DAY, paidBy: SANDBOX_ME, rawLines: [line('poster', 'default', 2, 50000)], submittedAt: Date.now() - 12 * DAY }),
     order({ id: 'o6', eventId: 'store', batchId: month.id, transactionId: `MO_${month.number}_0001`, customer: c('Kevin Susanto', 'Jl. Anggrek 9, Surabaya 60111'), fulfilment: 'mail', status: 'awaiting_shipment', orderType: 'mail_order', payment: 'paid', paidAt: Date.now() - 2 * DAY, paidBy: SANDBOX_ME, source: 'store', paymentMethod: 'QRIS', rawLines: [line('guide', 'en', 1, 120000)], submittedAt: Date.now() - 3 * DAY }),
-    order({ id: 'o7', eventId: 'cf23', batchId: 'cf23b3', transactionId: 'CF23_3_0009', customer: c('Rani Kusuma', 'Jl. Dahlia 1, Jakarta 12110'), fulfilment: 'mail', status: 'shipped', shippedAt: Date.now() - 20 * DAY, orderType: 'mail_order', payment: 'paid', tracking: { courier: 'JNE', number: 'CGK0001122334' }, rawLines: [line('sticker', 'holo', 2, 40000)], submittedAt: Date.now() - 30 * DAY }),
+    order({ id: 'o7', eventId: 'cf23', batchId: 'cf23b3', transactionId: 'CF23_3_0009', customer: c('Rani Kusuma', 'Jl. Dahlia 1, Jakarta 12110'), fulfilment: 'mail', status: 'shipped', shippedAt: Date.now() - 20 * DAY, orderType: 'mail_order', payment: 'paid', tracking: { courier: 'JNE', number: 'CGK0001122334' }, rawLines: [line('sticker', 'holo', 2, 40000)], submittedAt: Date.now() - 30 * DAY,
+      emails: [{ type: 'delivered', to: 'rani@example.com', at: Date.now() - 20 * DAY, ok: true, id: 'sandbox' }] }),
     order({ id: 'o8', eventId: 'cf23', batchId: 'cf23b3', transactionId: 'CF23_3_0010', customer: c('Agus Hartono'), fulfilment: 'mail', status: 'cancelled', cancelledAt: Date.now() - 15 * DAY, orderType: 'mail_order', payment: 'unpaid', rawLines: [line('keychain', 'gold', 1, 40000)], submittedAt: Date.now() - 28 * DAY }),
   ];
 
   // Live price list straight from the catalogue; the 20 cm standee changed an hour ago.
-  const settings: Settings = { ...DEFAULT_SETTINGS, storefront: storefrontOf({}) };
+  const settings: Settings = {
+    ...DEFAULT_SETTINGS, storefront: storefrontOf({}), resendFromEmail: 'shop@example.com', resendFromName: 'Tsuchinoco',
+    notifications: { received: { on: true }, paid: { on: true }, delivered: { on: true } },
+  };
   const now = Date.now();
   const list: Record<string, LivePrice> = {};
   for (const it of items) for (const key of keysOf(it)) {

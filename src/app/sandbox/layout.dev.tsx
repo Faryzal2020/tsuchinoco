@@ -12,6 +12,7 @@ const LINKS = [
   { href: '/sandbox/orders/', label: 'Orders' },
   { href: '/sandbox/storefront/', label: 'Storefront (staff)' },
   { href: '/sandbox/shop/', label: 'Shop (customer)' },
+  { href: '/sandbox/settings/', label: 'Order e-mails' },
 ];
 
 export default function SandboxLayout({ children }: { children: React.ReactNode }) {

@@ -2,7 +2,7 @@
 // Older orders have no orderType or payment field; the fallbacks below derive them so every
 // screen works before and after the one-off migration in Settings.
 import type { Batch, Courier, Event, Order, OrderStatus, OrderType, PaymentStatus } from '@/types';
-import { OPEN_ORDER_STATUSES } from '@/types';
+import { OPEN_ORDER_STATUSES } from '../types';
 import { eventCode } from './forms';
 import { formatDate, todayIso } from './format';
 

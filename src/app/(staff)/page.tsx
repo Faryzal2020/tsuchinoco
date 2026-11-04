@@ -1,7 +1,7 @@
 'use client';
 
 // Orders across upcoming events, plus the queue of customer submissions being turned into orders.
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useData, useOrdersForEvents } from '@/lib/data';
 import { usePrefs } from '@/lib/prefs';
@@ -120,6 +120,7 @@ function OrdersPage() {
   // An order that leaves the list (picked up, delivered, cancelled in Unfulfilled) closes its modal
   // rather than showing a stale copy; it stays reachable under All orders.
   const live = useMemo(() => source_.find((o) => o.id === openOrder?.id) ?? null, [source_, openOrder]);
+  useEffect(() => { if (openOrder && loaded && !live) setOpenOrder(null); }, [openOrder, loaded, live]);
   const chosen = rows.filter((r) => selected.has(r.o.id));
   const toggle = (id: string, on: boolean) => setSelected((cur) => { const n = new Set(cur); if (on) n.add(id); else n.delete(id); return n; });
   const allOn = rows.length > 0 && rows.every((r) => selected.has(r.o.id));
@@ -289,7 +290,7 @@ function SubmissionQueue() {
         <h2 className="font-bold">New submissions</h2>
         {pending.length > 0 && <Pill tone="yellow">{pending.length} waiting</Pill>}
         {rejected.length > 0 && <Pill tone="red">{rejected.length} rejected</Pill>}
-        <span className="hint">{busy ? 'Importing…' : 'Imported automatically while the app is open.'}</span>
+        <span className="hint">{busy ? 'Importing…' : 'The server imports new submissions within seconds; this app steps in for any still waiting after 2 minutes.'}</span>
         <Button size="sm" className="ml-auto" onClick={importNow} busy={busy} disabled={pending.length === 0}>Import now</Button>
       </div>
       <div className="mt-3 grid gap-1.5 text-sm">
