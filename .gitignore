@@ -45,3 +45,6 @@ next-env.d.ts
 /functions/node_modules
 /functions/lib
 /functions/.secret.local
+
+# others
+/.claude

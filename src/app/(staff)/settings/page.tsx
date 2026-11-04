@@ -11,6 +11,8 @@ import { db, functions, storage } from '@/lib/firebase';
 import { dataUrlToBlob } from '@/lib/media';
 import { COL, settingsRepo, staffRepo } from '@/lib/repo';
 import { usePrefs } from '@/lib/prefs';
+import { FREE_LIMITS, FREE_STORAGE_REGIONS, useUsageReport } from '@/lib/usage';
+import { DailyBars, Meter, fmtBytes, fmtCount } from '@/components/settings/UsageMeters';
 import type { Media } from '@/types';
 import Button from '@/components/ui/Button';
 import { Checkbox, Field, Input } from '@/components/ui/Field';
@@ -21,6 +23,7 @@ export default function SettingsPage() {
   const { me } = useAuth();
   const { run, error, toast } = useToast();
   const { allowDelete, setAllowDelete } = usePrefs();
+  const usage = useUsageReport();
 
   // Staff
   const [email, setEmail] = useState('');
@@ -100,7 +103,9 @@ export default function SettingsPage() {
             </div>
           </Panel>
 
-          <CloudStoragePanel />
+          <CloudStoragePanel usage={usage} />
+
+          <UsageTrafficPanel usage={usage} />
 
           <Panel>
             <h2 className="font-bold mb-1">JotForm connection (legacy)</h2>
@@ -147,9 +152,11 @@ export default function SettingsPage() {
   );
 }
 
-function CloudStoragePanel() {
+type Usage = ReturnType<typeof useUsageReport>;
+
+function CloudStoragePanel({ usage }: { usage: Usage }) {
   const { run } = useToast();
-  const [stats, setStats] = useState<{ total: number; storage: number; inline: number } | null>(null);
+  const [stats, setStats] = useState<{ total: number; storage: number; inline: number; storageBytes: number; inlineBytes: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [migrating, setMigrating] = useState(false);
   const [progress, setProgress] = useState('');
@@ -160,12 +167,14 @@ function CloudStoragePanel() {
       const snap = await getDocs(collection(db, COL.media));
       let inStorage = 0;
       let inline = 0;
+      let storageBytes = 0;
+      let inlineBytes = 0;
       snap.forEach((d) => {
         const m = d.data() as Media;
-        if (m.url) inStorage++;
-        else if (m.dataUrl) inline++;
+        if (m.url) { inStorage++; storageBytes += m.bytes || 0; }
+        else if (m.dataUrl) { inline++; inlineBytes += m.dataUrl.length; }
       });
-      setStats({ total: snap.size, storage: inStorage, inline });
+      setStats({ total: snap.size, storage: inStorage, inline, storageBytes, inlineBytes });
     } catch (err) {
       console.error(err);
     } finally {
@@ -221,10 +230,17 @@ function CloudStoragePanel() {
   };
 
   const bucket = storage.app.options.storageBucket;
+  const r = usage.report;
+  const L = FREE_LIMITS.storage;
+  const location = r?.storage.location?.toLowerCase();
+  const freeRegion = !location || FREE_STORAGE_REGIONS.includes(location);
 
   return (
     <Panel>
-      <h2 className="font-bold mb-1">Cloud Storage & Media (Phase 4)</h2>
+      <div className="flex items-center justify-between gap-3 mb-1">
+        <h2 className="font-bold">Cloud Storage & Media (Phase 4)</h2>
+        {location && (freeRegion ? <Pill tone="green">{location}</Pill> : <Pill tone="yellow">{location} · no free tier</Pill>)}
+      </div>
       <p className="hint mb-3">
         Cloud Storage stores catalogue images and receipt uploads as files instead of 1 MB Firestore base64 documents.
       </p>
@@ -237,13 +253,55 @@ function CloudStoragePanel() {
           <div className="flex items-center gap-2">
             <span className="text-ink-2 font-medium">Media:</span>
             <span>
-              <b>{stats.storage}</b> in Cloud Storage · <b>{stats.inline}</b> inline in Firestore (total {stats.total})
+              <b>{stats.storage}</b> in Cloud Storage ({fmtBytes(stats.storageBytes)}) · <b>{stats.inline}</b> inline in Firestore ({fmtBytes(stats.inlineBytes)}) · total {stats.total}
             </span>
           </div>
         )}
       </div>
+
+      <div className="grid gap-4 border-t border-line pt-3 mb-3">
+        <div className="flex items-baseline justify-between gap-3">
+          <h3 className="text-sm font-bold">Capacity against the free plan</h3>
+          <span className="text-xs text-muted">{r ? `Month since ${new Date(r.monthStart).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : ''}</span>
+        </div>
+        {!freeRegion && (
+          <p className="hint text-xs">
+            The no-cost Cloud Storage allowance only applies to buckets in {FREE_STORAGE_REGIONS.join(', ')}. This bucket is billed from the first byte; the bars show how far you would be into the free allowance.
+          </p>
+        )}
+        <Meter
+          label="Files stored"
+          used={r?.storage.storedBytes}
+          limit={L.storedBytes}
+          format={fmtBytes}
+          sub={r?.storage.objects != null ? `${fmtCount(r.storage.objects)} files, includes receipts and soft-deleted copies` : 'Includes receipts and soft-deleted copies'}
+        />
+        <Meter label="Downloaded this month" used={r?.storage.egressMonth} limit={L.egressPerMonth} format={fmtBytes} sub="Images served to the form and staff app" />
+        <Meter label="Upload operations this month" used={r?.storage.classAMonth} limit={L.uploadsPerMonth} sub="Uploads, listings and metadata changes (Class A)" />
+        <Meter label="Download operations this month" used={r?.storage.classBMonth} limit={L.downloadsPerMonth} sub="File and metadata reads (Class B)" />
+        {r && r.storage.ops.length > 0 && (
+          <details className="text-xs text-muted -mt-2">
+            <summary className="cursor-pointer">Operations by type this month</summary>
+            <div className="mt-1 grid gap-0.5">
+              {r.storage.ops.map((o) => (
+                <div key={o.method} className="flex justify-between gap-4"><span className="mono">{o.method}</span><span className="tabular-nums">{fmtCount(o.count)}</span></div>
+              ))}
+            </div>
+          </details>
+        )}
+        <Meter
+          label="Firestore database size"
+          used={r?.firestore.storedBytes}
+          limit={FREE_LIMITS.firestore.storedBytes}
+          format={fmtBytes}
+          sub={stats?.inline ? `Includes ${fmtBytes(stats.inlineBytes)} of inline images` : 'Documents and indexes'}
+        />
+        <Meter label="Hosting files" used={r?.hosting.storedBytes} limit={FREE_LIMITS.hosting.storedBytes} format={fmtBytes} sub="Deployed app, all kept releases" />
+        {usage.error && <p className="hint text-xs">Usage figures are unavailable; see Usage &amp; traffic below.</p>}
+      </div>
+
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={checkMedia} busy={loading} disabled={migrating}>
+        <Button size="sm" onClick={() => { checkMedia(); usage.refresh(); }} busy={loading || usage.loading} disabled={migrating}>
           Refresh status
         </Button>
         {stats && stats.inline > 0 && (
@@ -253,6 +311,84 @@ function CloudStoragePanel() {
         )}
       </div>
       {progress && <p className="hint mt-2 text-xs font-mono">{progress}</p>}
+    </Panel>
+  );
+}
+
+function UsageError({ message }: { message: string }) {
+  return (
+    <div className="rounded-md border border-line bg-cream-2 p-3 text-xs">
+      <p className="font-semibold">Usage figures are unavailable: {message}</p>
+      <p className="text-ink-2 mt-1">
+        They come from the <span className="mono">usageMetrics</span> Cloud Function. Deploy it with{' '}
+        <span className="mono">firebase deploy --only functions:usageMetrics</span>, and make sure the Cloud Monitoring API is enabled for the project.
+      </p>
+    </div>
+  );
+}
+
+function UsageTrafficPanel({ usage }: { usage: Usage }) {
+  const { report: r, loading, error, refresh } = usage;
+  const F = FREE_LIMITS.firestore;
+  const reset = r ? new Date(r.dayStart + 86_400_000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null;
+
+  return (
+    <Panel>
+      <div className="flex items-center justify-between gap-3 mb-1">
+        <h2 className="font-bold">Usage & traffic</h2>
+        <Button size="sm" onClick={refresh} busy={loading}>Refresh</Button>
+      </div>
+      <p className="hint mb-3">
+        Compared with Firebase&apos;s no-cost quotas. Daily quotas reset at midnight Pacific time{reset ? ` (${reset} your time)` : ''}. Figures lag a few minutes; Hosting traffic can lag about an hour.
+      </p>
+
+      {error && !r && <UsageError message={error} />}
+      {r && (
+        <div className="grid gap-5">
+          <section className="grid gap-3">
+            <h3 className="text-sm font-bold">Firestore today</h3>
+            <Meter label="Document reads" used={r.firestore.reads} limit={F.readsPerDay} sub="Every document a page or form loads" />
+            <Meter label="Document writes" used={r.firestore.writes} limit={F.writesPerDay} sub="Orders, submissions, edits, logs" />
+            <Meter label="Document deletes" used={r.firestore.deletes} limit={F.deletesPerDay} />
+            <DailyBars label="Reads per day" days={r.firestore.daily.reads} today={r.firestore.reads} />
+            <DailyBars label="Writes per day" days={r.firestore.daily.writes} today={r.firestore.writes} />
+          </section>
+
+          <section className="grid gap-3 border-t border-line pt-3">
+            <h3 className="text-sm font-bold">Website traffic</h3>
+            <Meter label="Hosting transfer today" used={r.hosting.egressToday} limit={FREE_LIMITS.hosting.egressPerDay} format={fmtBytes} sub="App and public form pages served" />
+            <DailyBars label="Hosting transfer per day" days={r.hosting.egressDaily} today={r.hosting.egressToday} format={fmtBytes} />
+            <DailyBars label="Image downloads per day (Cloud Storage)" days={r.storage.egressDaily} format={fmtBytes} />
+          </section>
+
+          <section className="grid gap-3 border-t border-line pt-3">
+            <h3 className="text-sm font-bold">Cloud Functions this month</h3>
+            <Meter label="Invocations" used={r.functions.requestsMonth} limit={FREE_LIMITS.functions.invocationsPerMonth} sub="Email broadcasts and this usage check" />
+            {r.functions.byService.length > 0 && (
+              <div className="grid gap-0.5 text-xs">
+                {r.functions.byService.map((f) => (
+                  <div key={f.name} className="flex justify-between gap-3">
+                    <span className="mono text-ink-2">{f.name}</span>
+                    <span className="tabular-nums">{fmtCount(f.count)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <div className="border-t border-line pt-3 text-xs text-muted">
+            <span>Updated {new Date(r.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · project <span className="mono">{r.projectId}</span></span>
+          </div>
+          {r.errors.length > 0 && (
+            <details className="text-xs">
+              <summary className="cursor-pointer text-red-ink">{r.errors.length} metric{r.errors.length === 1 ? '' : 's'} could not be read</summary>
+              <ul className="mt-1 grid gap-1 text-ink-2">
+                {r.errors.map((e) => <li key={e} className="mono break-all">{e}</li>)}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
     </Panel>
   );
 }

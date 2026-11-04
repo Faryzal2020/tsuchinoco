@@ -1,6 +1,7 @@
 // Typed wrappers around the Cloud Functions callables.
 import { httpsCallable } from 'firebase/functions';
 import { functions } from './firebase';
+import type { UsageReport } from './usage';
 
 const call = <Req, Res>(name: string) => async (data: Req): Promise<Res> => {
   const fn = httpsCallable<Req, Res>(functions, name);
@@ -44,4 +45,6 @@ export const fx = {
       results: { email: string; success: boolean; id?: string; error?: string }[];
     }
   >('sendBroadcastEmail'),
+
+  usageMetrics: call<Record<string, never>, UsageReport>('usageMetrics'),
 };
