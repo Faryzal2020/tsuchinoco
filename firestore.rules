@@ -37,7 +37,7 @@ service cloud.firestore {
     function validSubmission() {
       let d = request.resource.data;
       let p = pub();
-      return d.keys().hasOnly(['formId', 'eventId', 'batchId', 'version', 'code', 'customer', 'fulfilment', 'pickupDay', 'paymentProofUrl', 'notes', 'lines', 'submittedAt', 'status', 'orderType', 'seen', 'createdAt'])
+      return d.keys().hasOnly(['formId', 'eventId', 'batchId', 'version', 'code', 'customer', 'fulfilment', 'pickupDay', 'paymentProofUrl', 'notes', 'lines', 'submittedAt', 'status', 'orderType', 'seen', 'createdAt', 'paymentMethod'])
         && d.keys().hasAll(['formId', 'eventId', 'batchId', 'version', 'code', 'customer', 'fulfilment', 'notes', 'lines', 'submittedAt', 'status'])
         && str(d.formId, 40) && p.data.enabled == true
         && d.eventId == p.data.eventId && d.batchId == p.data.batchId
@@ -54,6 +54,7 @@ service cloud.firestore {
         && d.status == 'new'
         && (!('orderType' in d) || d.orderType in ['preorder', 'mail_order'])
         && (!('seen' in d) || (d.seen is map && d.seen.size() <= 60))
+        && (!('paymentMethod' in d) || str(d.paymentMethod, 60))
         // Server time, so the importer can apply the price grace period fairly.
         && (!('createdAt' in d) || d.createdAt == request.time)
         // The batch dates: no submissions before the opening day or after the closing day.
@@ -63,6 +64,14 @@ service cloud.firestore {
     match /submissions/{id} {
       allow create: if request.auth != null && validSubmission();
       allow read, update, delete: if isStaff();
+    }
+
+    // ---- Public exception 4: the storefront catalogue and the mail-order switch. ----
+    // Orders from the storefront go through the submission rules above: each storefront lane
+    // is a publicForms document (store_<batchId>, store_mail).
+    match /publicStore/{id} {
+      allow read: if true;
+      allow write: if isStaff();
     }
 
     // ---- Public exception 3: the live price list both customer pages read. ----

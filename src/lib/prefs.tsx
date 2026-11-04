@@ -43,7 +43,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!loaded) return;
     if (currentEventId && events.some((e) => e.id === currentEventId)) return;
-    const upcoming = [...events].filter((e) => e.status === 'upcoming').sort((a, b) => a.startDate.localeCompare(b.startDate));
+    const upcoming = [...events].filter((e) => e.status === 'upcoming' && e.kind !== 'store').sort((a, b) => a.startDate.localeCompare(b.startDate));
     const pick = upcoming[0] ?? events[0];
     if (pick) { setEvt(pick.id); write(KEY_EVENT, pick.id); }
   }, [loaded, events, currentEventId]);

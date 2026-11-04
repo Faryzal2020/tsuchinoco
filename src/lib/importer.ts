@@ -9,6 +9,7 @@ import { offeringKey } from './forms';
 import { DEFAULT_VARIANT_ID, splitKey, variantLabel } from './keys';
 import { catalogPrice, orderTypeForBatch, quote, storefrontOf, type CatalogPrice } from './pricing';
 import { PUBLIC_PRICES_ID } from './prices';
+import { isStoreLaneId, MAIL_LANE_BATCH, monthBatchFor } from './store';
 import type { Batch, Event, Item, Order, OrderType, PublicPrices, RawLine, Settings, Submission } from '@/types';
 
 export type ImportResult = 'imported' | 'rejected' | 'skipped';
@@ -104,8 +105,26 @@ export async function importSubmission(subId: string, ctx: ImportContext, by: st
     previousStatus = sub.status;
     if (sub.status !== 'new') return 'skipped';
 
-    const batch = ctx.batches.find((b) => b.id === sub.batchId);
-    const event = batch ? ctx.events.find((e) => e.id === batch.eventId) : undefined;
+    // Storefront mail orders are filed under the mail-order channel's batch for the month they came in.
+    const isMail = sub.batchId === MAIL_LANE_BATCH;
+    const at = submissionTime(sub);
+    let batch = isMail ? undefined : ctx.batches.find((b) => b.id === sub.batchId);
+    const event = isMail ? ctx.events.find((e) => e.id === sub.eventId && e.kind === 'store') : batch ? ctx.events.find((e) => e.id === batch!.eventId) : undefined;
+    let newMonthBatch: Omit<Batch, 'id'> | null = null;
+    if (isMail && event) {
+      const month = monthBatchFor(at);
+      const ref = doc(db, COL.batches, month.id);
+      const snap = await tx.get(ref);
+      if (snap.exists()) batch = { id: snap.id, ...(snap.data() as Omit<Batch, 'id'>) };
+      else {
+        const now = Date.now();
+        newMonthBatch = {
+          eventId: event.id, number: month.number, mode: 'post', status: 'open', opensAt: '', closesAt: '', offering: [], planning: {}, storefront: false,
+          createdAt: now, updatedAt: now, updatedBy: by,
+        };
+        batch = { id: month.id, ...newMonthBatch };
+      }
+    }
     if (!batch || !event) {
       tx.update(subRef, { status: 'rejected', rejectReason: 'Batch or event no longer exists' });
       return 'rejected';
@@ -120,13 +139,15 @@ export async function importSubmission(subId: string, ctx: ImportContext, by: st
     }
 
     const tid = await allocateTransactionId(tx, batch, event);
+    if (newMonthBatch) tx.set(doc(db, COL.batches, batch.id), newMonthBatch);
     const fulfilment: Order['fulfilment'] = batch.mode === 'post' ? 'mail' : sub.fulfilment === 'mail' ? 'mail' : 'pickup';
     const now = Date.now();
     const orderId = doc(db, COL.orders).id;
     createdTid = tid;
     createdOrderId = orderId;
     const order: Omit<Order, 'id'> = {
-      eventId: batch.eventId, batchId: batch.id, source: 'web', externalId: sub.id, transactionId: tid,
+      eventId: batch.eventId, batchId: batch.id, source: isStoreLaneId(sub.formId) ? 'store' : 'web', externalId: sub.id, transactionId: tid,
+      paymentMethod: sub.paymentMethod?.trim() || undefined,
       pickupDay: fulfilment === 'pickup' ? sub.pickupDay : undefined,
       paymentProofUrl: sub.paymentProofUrl,
       submittedAt: Number(sub.submittedAt) || now,

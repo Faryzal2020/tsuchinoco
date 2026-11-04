@@ -8,7 +8,7 @@ import { collection, doc, onSnapshot, query, where, type DocumentData, type Quer
 import { db } from './firebase';
 import { COL } from './repo';
 import { useAuth } from './auth';
-import type { Batch, Event, FormDoc, FormTemplate, Item, Order, PublicForm, PublicPrices, Settings, Staff, StockMovement, Submission, ThemePresetDoc, Wrapup } from '@/types';
+import type { Batch, Event, FormDoc, FormTemplate, Item, Order, PublicForm, PublicPrices, Settings, StoreCatalog, StoreStatus, Staff, StockMovement, Submission, ThemePresetDoc, Wrapup } from '@/types';
 import { DEFAULT_SETTINGS, OPEN_ORDER_STATUSES } from '@/types';
 
 interface Data {
@@ -34,10 +34,22 @@ interface Data {
   settings: Settings;
   /** The live price list customers see; null until the first price sync. */
   publicPrices: PublicPrices | null;
+  /** The published storefront and the mail-order switch; null until first published. */
+  storeCatalog: StoreCatalog | null;
+  storeStatus: StoreStatus | null;
   staffName: (id: string) => string;
 }
 
 const Ctx = createContext<Data | null>(null);
+/** Sandbox only: every order, so the per-event order hooks read sample data instead of Firestore. */
+const OrdersOverride = createContext<Order[] | null>(null);
+
+/** Fixed data, for the localhost sandbox only. */
+export function StaticDataProvider({ value, allOrders, children }: { value: Data; allOrders: Order[]; children: React.ReactNode }) {
+  return <Ctx.Provider value={value}><OrdersOverride.Provider value={allOrders}>{children}</OrdersOverride.Provider></Ctx.Provider>;
+}
+
+export type { Data };
 
 function rowsOf<T>(snap: QuerySnapshot<DocumentData>): T[] {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as T);
@@ -60,6 +72,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [themePresets, setThemePresets] = useState<ThemePresetDoc[]>([]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [publicPrices, setPublicPrices] = useState<PublicPrices | null>(null);
+  const [storeCatalog, setStoreCatalog] = useState<StoreCatalog | null>(null);
+  const [storeStatus, setStoreStatus] = useState<StoreStatus | null>(null);
   const [loadedCount, setLoadedCount] = useState(0);
 
   useEffect(() => {
@@ -80,6 +94,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       onSnapshot(collection(db, COL.templates), (s) => { setTemplates(rowsOf<FormTemplate>(s)); bump(); }, log('templates')),
       onSnapshot(collection(db, COL.themePresets), (s) => { setThemePresets(rowsOf<ThemePresetDoc>(s)); bump(); }, log('themePresets')),
       onSnapshot(doc(db, COL.publicPrices, 'current'), (s) => { setPublicPrices(s.exists() ? (s.data() as PublicPrices) : null); bump(); }, log('publicPrices')),
+      onSnapshot(doc(db, COL.publicStore, 'catalog'), (s) => { setStoreCatalog(s.exists() ? (s.data() as StoreCatalog) : null); bump(); }, log('storeCatalog')),
+      onSnapshot(doc(db, COL.publicStore, 'status'), (s) => { setStoreStatus(s.exists() ? (s.data() as StoreStatus) : null); bump(); }, log('storeStatus')),
       onSnapshot(doc(db, COL.settings, 'global'), (s) => { setSettings(s.exists() ? { ...DEFAULT_SETTINGS, ...(s.data() as Partial<Settings>) } : DEFAULT_SETTINGS); bump(); }, log('settings')),
     ];
     return () => { unsubs.forEach((u) => u()); setLoadedCount(0); };
@@ -89,7 +105,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     const itemsById = new Map(items.map((i) => [i.id, i]));
     const staffById = new Map(staff.map((s) => [s.id, s]));
     return {
-      loaded: loadedCount >= 14,
+      loaded: loadedCount >= 16,
       staff: [...staff].sort((a, b) => a.displayName.localeCompare(b.displayName)),
       items: [...items].sort((a, b) => a.name.localeCompare(b.name)),
       itemsById,
@@ -108,9 +124,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       themePresets: [...themePresets].sort((a, b) => a.createdAt - b.createdAt),
       settings,
       publicPrices,
+      storeCatalog,
+      storeStatus,
       staffName: (id: string) => staffById.get(id)?.displayName || id,
     };
-  }, [staff, items, events, batches, openOrders, movements, wrapups, forms, publicForms, submissions, templates, themePresets, settings, publicPrices, loadedCount]);
+  }, [staff, items, events, batches, openOrders, movements, wrapups, forms, publicForms, submissions, templates, themePresets, settings, publicPrices, storeCatalog, storeStatus, loadedCount]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -123,9 +141,11 @@ export function useData(): Data {
 
 /** Live orders for one event (all statuses). */
 export function useEventOrders(eventId: string | undefined): { orders: Order[]; loaded: boolean } {
+  const override = useContext(OrdersOverride);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
+    if (override) return;
     if (!eventId) { setOrders([]); setLoaded(true); return; }
     setLoaded(false);
     return onSnapshot(
@@ -133,16 +153,19 @@ export function useEventOrders(eventId: string | undefined): { orders: Order[]; 
       (s) => { setOrders(rowsOf<Order>(s).sort((a, b) => b.submittedAt - a.submittedAt)); setLoaded(true); },
       (e) => { console.error('[data] eventOrders', e); setLoaded(true); },
     );
-  }, [eventId]);
+  }, [eventId, override]);
+  if (override) return { orders: override.filter((o) => o.eventId === eventId).sort((a, b) => b.submittedAt - a.submittedAt), loaded: true };
   return { orders, loaded };
 }
 
 /** Live orders for several events (all statuses). Firestore allows up to 30 ids in one `in` query. */
 export function useOrdersForEvents(eventIds: string[]): { orders: Order[]; loaded: boolean } {
   const key = eventIds.slice(0, 30).sort().join(',');
+  const override = useContext(OrdersOverride);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
+    if (override) return;
     const ids = key ? key.split(',') : [];
     if (ids.length === 0) { setOrders([]); setLoaded(true); return; }
     setLoaded(false);
@@ -151,6 +174,7 @@ export function useOrdersForEvents(eventIds: string[]): { orders: Order[]; loade
       (s) => { setOrders(rowsOf<Order>(s).sort((a, b) => b.submittedAt - a.submittedAt)); setLoaded(true); },
       (e) => { console.error('[data] ordersForEvents', e); setLoaded(true); },
     );
-  }, [key]);
+  }, [key, override]);
+  if (override) { const ids = new Set(key ? key.split(',') : []); return { orders: override.filter((o) => ids.has(o.eventId)).sort((a, b) => b.submittedAt - a.submittedAt), loaded: true }; }
   return { orders, loaded };
 }

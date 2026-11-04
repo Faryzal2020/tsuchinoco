@@ -46,6 +46,7 @@ export const COL = {
   logs: 'logs',
   priceHistory: 'priceHistory',
   publicPrices: 'publicPrices',
+  publicStore: 'publicStore',
 } as const;
 
 type Meta = { createdAt: number; updatedAt: number; updatedBy: string };

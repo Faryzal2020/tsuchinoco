@@ -145,6 +145,8 @@ export interface Batch {
   closesAt: string;
   offering: OfferingEntry[];
   form?: BatchForm;
+  /** False keeps a preorder batch off the storefront (Form only). Absent means listed. */
+  storefront?: boolean;
   planning: Record<string, PlanningInputs>; // keyed by variantKey
   createdAt: number;
   updatedAt: number;
@@ -212,6 +214,8 @@ export interface Order {
   paidAt?: number;
   paidBy?: string;
   tracking?: { courier: string; number: string; url?: string };
+  /** Payment choice picked at checkout, e.g. "Bank transfer". */
+  paymentMethod?: string;
   /** A mail order shipped before the event it waits for ended, released by staff. */
   holdReleased?: boolean;
   /** Set by the importer when the price charged differs from the one the customer saw. */
@@ -450,6 +454,7 @@ export interface Submission {
   lines: Record<string, number>;
   /** Price entry id the customer saw per line key. */
   seen?: Record<string, string>;
+  paymentMethod?: string;
   /** Server time of the write, enforced by the rules. A Firestore Timestamp when read. */
   createdAt?: unknown;
   submittedAt: number;
@@ -516,11 +521,22 @@ export interface StorefrontSettings {
   priceBasis: Record<OrderType, 'po' | 'ots'>;
   graceMinutes: number;
   couriers: Courier[];
+  /** Shown at the top of the storefront. */
+  shopTitle?: string;
+  shopIntro?: string;
+  /** Payment instructions shown at checkout until a payment gateway exists. */
+  paymentText?: string;
+  /** Payment choices offered at checkout. */
+  paymentChoices?: string[];
 }
 
 export const DEFAULT_STOREFRONT: StorefrontSettings = {
   priceBasis: { preorder: 'po', mail_order: 'ots' },
   graceMinutes: 60,
+  shopTitle: 'Tsuchinoco shop',
+  shopIntro: 'Preorder for our next event, or order by mail between events.',
+  paymentText: 'Transfer the total to the account below and upload the receipt. We confirm every payment by hand.',
+  paymentChoices: ['Bank transfer', 'QRIS'],
   couriers: [
     { name: 'JNE' },
     { name: 'J&T Express' },
@@ -528,6 +544,70 @@ export const DEFAULT_STOREFRONT: StorefrontSettings = {
     { name: 'Pos Indonesia' },
   ],
 };
+
+// ---- Storefront (public) ----
+
+/** One orderable key of a product on the storefront, with the catalogue price at publish time as a fallback. */
+export interface StoreVariant {
+  key: string;
+  name: string;
+  thumb?: string;
+  fallback: { po: number; ots: number; discountPercent?: number };
+}
+
+export interface StoreProduct {
+  itemId: string;
+  name: string;
+  kind: ItemKind;
+  type: string;
+  category?: string;
+  artist?: string;
+  thumb?: string;
+  variants: StoreVariant[];
+}
+
+/** A place a storefront order can go: an open preorder batch, or the mail-order channel. */
+export interface StoreLaneInfo {
+  /** publicForms document id: `store_<batchId>` or `store_mail`. */
+  id: string;
+  kind: OrderType;
+  eventName: string;
+  eventCode: string;
+  startDate: string;
+  endDate: string;
+  pickupDays: string[];
+  /** Last day preorders are taken, YYYY-MM-DD. */
+  closesAt: string;
+}
+
+/** publicStore/catalog: everything the storefront shows. Public read, written by staff on publish. */
+export interface StoreCatalog {
+  title: string;
+  intro: string;
+  currency: string;
+  products: StoreProduct[];
+  lanes: StoreLaneInfo[];
+  /** Event days, from the start of the first day to the end of the last: mail order pauses. */
+  eventDays: { name: string; code: string; from: number; until: number }[];
+  /** Staff-chosen sections and highlights come later; empty means group by item type. */
+  sections: { title: string; keys: string[] }[];
+  highlights: string[];
+  paymentText: string;
+  paymentChoices: string[];
+  requirePhone: boolean;
+  requireEmail: boolean;
+  publishedAt: number;
+  publishedHash: string;
+  version: number;
+}
+
+/** publicStore/status: the mail-order switch. Public read. */
+export interface StoreStatus {
+  mailOrderOpen: boolean;
+  /** "Open mail order anyway" until this time, even during an event or an open preorder. */
+  overrideUntil?: number;
+  updatedAt: number;
+}
 
 export interface Settings {
   currency: string;

@@ -15,6 +15,7 @@ const NAV = [
   { href: '/', label: 'Orders' },
   { href: '/events/', label: 'Events' },
   { href: '/forms/', label: 'Forms' },
+  { href: '/storefront/', label: 'Storefront' },
   { href: '/catalog/', label: 'Catalogue' },
   { href: '/stock/', label: 'Stock' },
   { href: '/emails/', label: 'Emails' },
@@ -96,7 +97,7 @@ function TopBar() {
             <span className="hidden text-ink-2 sm:inline">Event</span>
             <Select small value={currentEventId} onChange={(e) => setCurrentEventId(e.target.value)} className="w-[200px]" disabled={!loaded}>
               {events.length === 0 && <option value="">No events yet</option>}
-              {events.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+              {events.filter((e) => e.kind !== 'store').map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
             </Select>
           </label>
           <Checkbox label="My items only" checked={mineOnly} onChange={(e) => setMineOnly(e.target.checked)} />

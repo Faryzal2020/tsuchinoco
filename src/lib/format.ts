@@ -24,12 +24,15 @@ export const formatDateTime = (ms: number | undefined | null): string => {
   });
 };
 
-export const todayIso = (): string => new Date().toISOString().slice(0, 10);
+/** YYYY-MM-DD in local time. toISOString() would give the UTC date, a day off east of UTC. */
+const localIso = (d: Date): string => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+export const todayIso = (): string => localIso(new Date());
 
 export const addDaysIso = (iso: string, days: number): string => {
   const d = new Date(iso + 'T00:00:00');
   d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  return localIso(d);
 };
 
 export const isPastIso = (iso: string | undefined): boolean => !!iso && iso < todayIso();

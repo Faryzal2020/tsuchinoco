@@ -60,6 +60,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
+/** Fixed auth value, for the localhost sandbox only. */
+export function StaticAuthProvider({ value, children }: { value: AuthCtx; children: React.ReactNode }) {
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+export type { AuthCtx };
+
 export function useAuth(): AuthCtx {
   const c = useContext(Ctx);
   if (!c) throw new Error('useAuth outside AuthProvider');

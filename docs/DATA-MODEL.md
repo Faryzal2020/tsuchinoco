@@ -337,3 +337,17 @@ Design: https://claude.ai/artifact/Rr9Gkay3xdr4oYD7cVWtq6
 - **Price of a line** (`quote` in `src/lib/pricing.ts`): offering override, else PO or OTS by `settings.storefront.priceBasis[orderType]` (default preorder PO, mail order OTS), then the discount. Lines store `priceEntryId`, `priceBasis`, `discountPercent`, `refPrice`.
 - **Checkout grace**: submissions carry `seen` (key → entry id) and a server `createdAt`. The importer charges the entry the customer saw if it was replaced no more than `graceMinutes` (default 60) before submission; otherwise the current price, and the order gets `priceFlag`.
 - **Accepting window**: publish writes `publicForms.acceptFrom` / `acceptUntil` from the batch dates (start of the opening day to the end of the closing day, local time). The rules reject submissions outside it using server time.
+
+## Storefront phase B: the shop page (2026-11-04)
+
+- **Customer page** `/shop/` (`src/components/shop/Shop.tsx`): search, Type / Series / Artist filters, one cart (kept in the browser), checkout with pickup-or-ship, payment choice, optional receipt, confirmation code. Prices come from `publicPrices/current`, so they are always live.
+- **States** (`storeState` in `src/lib/store.ts`): a preorder lane is open while its batch is open and today is within its dates. Mail order needs the staff switch, and pauses while any preorder is open or an event is running. "Open mail order anyway" shows it regardless until the end of that day. Nothing open means view only: browse with prices, no cart.
+- **Lanes** are `publicForms` documents, so the existing submission rules validate storefront orders: `store_<batchId>` per listed open preorder batch (`batches.storefront !== false`), and `store_mail` (batch id placeholder `store-mail`) for mail order.
+- **`publicStore/catalog`** (public): products with variants, thumbnails and fallback prices; lane info; event days; shop title, intro, payment text and choices; `publishedHash` for "changed since publish"; `version`. **`publicStore/status`** (public): `{ mailOrderOpen, overrideUntil? }`.
+- **Mail-order channel**: one event with `kind: 'store'` (name "Mail order", code `MO`), created on the first publish and hidden from Events, planning and the event picker. The importer files each storefront mail order under that month's batch `mo_<yymm>` (number `yymm`, created on first use), so order IDs read `MO_2611_0001`. Orders from the shop carry `source: 'store'` and `paymentMethod`.
+- **Publishing**: the Storefront page publishes on demand; opening a listed preorder batch publishes automatically, and closing it stops its lane. Items' `mailOrder: false` keeps them out of the mail lane.
+
+## Localhost sandbox
+
+`/sandbox/` runs the real Orders and Storefront staff pages and the shop on sample data (`src/components/sandbox/fixtures.ts`) with a fake signed-in staff member, and swaps the Firestore writes those pages use for in-memory ones. Its files are named `*.dev.tsx`, which `next.config.ts` treats as routes only under `next dev`, so production builds never include it; it also refuses to run off localhost. Reloading resets the data.
+

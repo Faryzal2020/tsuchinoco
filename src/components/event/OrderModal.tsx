@@ -94,6 +94,7 @@ export default function OrderModal({ order: o, event, onClose }: { order: Order 
             </span>
           } />
           <Kv k="Status" v={ORDER_STATUS_LABELS[o.status]} />
+          {o.paymentMethod && <Kv k="Payment choice" v={o.paymentMethod} />}
           {o.tracking && (
             <Kv k="Tracking" v={
               <span>{o.tracking.courier} · <span className="mono">{o.tracking.number}</span>{o.tracking.url && <> · <a href={o.tracking.url} target="_blank" rel="noopener noreferrer" className="text-blue-ink underline">Track</a></>}</span>

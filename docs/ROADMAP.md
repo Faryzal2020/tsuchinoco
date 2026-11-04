@@ -64,6 +64,10 @@ Goal: the same level of customization staff used in JotForm, scoped to what the 
 
 Order type, payment and tracking on every order; Orders page opens on Unfulfilled with tabs per order type; price history, live price list and percentage discount; enforced batch dates. See the storefront section of `docs/DATA-MODEL.md`. Phase B (the `/shop/` page and the standing mail-order channel) and phase C (server-side import, order-update e-mails) follow.
 
+## Storefront phase B — the shop page (built 2026-11-04, branch claude/storefront-phase-b)
+
+`/shop/` with search, filters, cart and checkout; staff Storefront page (state and reasons, mail-order switch and override, listed preorders, shop text, publish); standing mail-order channel with monthly batches; login-free `/sandbox/` for localhost. Phase C next: server-side import and order-update e-mails.
+
 ## Later and undecided
 
 - Customer-choice bundles ("any 3 keychains") on the form. Needs a decision on the data model first.

@@ -14,7 +14,9 @@ import { Empty, PageHeader, StatusPill, TableWrap } from '@/components/ui/Bits';
 import { Modal } from '@/components/ui/Dialog';
 
 export default function EventsPage() {
-  const { events, batches, openOrders, settings } = useData();
+  const { events: allEvents, batches, openOrders, settings } = useData();
+  // The standing mail-order channel is managed on the Storefront page, not here.
+  const events = allEvents.filter((e) => e.kind !== 'store');
   const { me } = useAuth();
   const { run } = useToast();
   const router = useRouter();

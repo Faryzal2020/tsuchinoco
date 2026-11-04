@@ -139,8 +139,9 @@ h1, h2, h3 { text-wrap: balance; letter-spacing: -0.01em; }
 .btn-quiet:active { transform: none; box-shadow: none; }
 
 /* ---------- Inputs ---------- */
+/* Full width by default, in the components layer so width utilities such as w-[220px] still win. */
+@layer components { .input, .select, .textarea { width: 100%; } }
 .input, .select, .textarea {
-  width: 100%;
   background: var(--white);
   border: 1.5px solid var(--line-strong);
   border-radius: var(--radius);

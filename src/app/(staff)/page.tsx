@@ -117,7 +117,9 @@ function OrdersPage() {
     // Unfulfilled: price flags first, then preorders before mail orders, oldest first.
     : (a.o.priceFlag ? 0 : 1) - (b.o.priceFlag ? 0 : 1) || (a.type === b.type ? 0 : a.type === 'preorder' ? -1 : 1) || a.o.submittedAt - b.o.submittedAt);
 
-  const live = useMemo(() => source_.find((o) => o.id === openOrder?.id) ?? openOrder, [source_, openOrder]);
+  // An order that leaves the list (picked up, delivered, cancelled in Unfulfilled) closes its modal
+  // rather than showing a stale copy; it stays reachable under All orders.
+  const live = useMemo(() => source_.find((o) => o.id === openOrder?.id) ?? null, [source_, openOrder]);
   const chosen = rows.filter((r) => selected.has(r.o.id));
   const toggle = (id: string, on: boolean) => setSelected((cur) => { const n = new Set(cur); if (on) n.add(id); else n.delete(id); return n; });
   const allOn = rows.length > 0 && rows.every((r) => selected.has(r.o.id));

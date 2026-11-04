@@ -9,10 +9,11 @@ import { batchRepo, formRepo } from '@/lib/repo';
 import { fx } from '@/lib/functions';
 import { createFormForBatch, formChangedSincePublish, publishForm } from '@/lib/formActions';
 import { formUrl } from '@/lib/forms';
+import { storeRepo } from '@/lib/storeActions';
 import { formatDate, formatDateTime } from '@/lib/format';
 import type { Batch, BatchStatus, OfferingEntry } from '@/types';
 import Button from '@/components/ui/Button';
-import { Field, Input, Select } from '@/components/ui/Field';
+import { Checkbox, Field, Input, Select } from '@/components/ui/Field';
 import { Empty, Panel, Pill, StatusPill } from '@/components/ui/Bits';
 import { Confirm, Modal } from '@/components/ui/Dialog';
 import OfferingPicker from './OfferingPicker';
@@ -51,7 +52,7 @@ export default function BatchesTab({ event, batches, orders }: TabProps) {
 function BatchCard({ event, batch: b, batches, orderCount }: { event: TabProps['event']; batch: Batch; batches: Batch[]; orderCount: number }) {
   const { me } = useAuth();
   const { allowDelete } = usePrefs();
-  const { items, itemsById, settings, formsById, publicFormsById } = useData();
+  const { items, itemsById, settings, formsById, publicFormsById, events, storeCatalog, storeStatus } = useData();
   const { run, toast } = useToast();
   const [editOffering, setEditOffering] = useState(false);
   const [offering, setOffering] = useState<OfferingEntry[]>(b.offering);
@@ -76,7 +77,22 @@ function BatchCard({ event, batch: b, batches, orderCount }: { event: TabProps['
       if (status === 'closed') await fx.setFormStatus({ batchId: b.id, enabled: false });
     }
     await batchRepo.patch(b.id, { status }, me);
+    await syncStorefront({ ...b, status });
   }, `Batch ${b.number} ${status}`);
+
+  // Opening a listed preorder batch republishes the storefront so its preorder appears; closing stops its lane.
+  const syncStorefront = async (next: Batch) => {
+    if (next.mode !== 'preorder') return;
+    if (next.status === 'open' && next.storefront !== false) {
+      await storeRepo.publish({ items, events, batches: batches.map((x) => (x.id === next.id ? next : x)), formsById, settings, current: storeCatalog, status: storeStatus, by: me });
+    } else {
+      await storeRepo.mirrorBatch(next.id, false);
+    }
+  };
+  const setListed = (listed: boolean) => act('storefront', async () => {
+    await batchRepo.patch(b.id, { storefront: listed }, me);
+    if (b.status === 'open') await syncStorefront({ ...b, storefront: listed });
+  }, listed ? 'Listed on the storefront' : 'Removed from the storefront');
 
   const otherOpen = batches.some((x) => x.id !== b.id && x.status === 'open');
   const offeringCount = b.offering.length;
@@ -103,6 +119,9 @@ function BatchCard({ event, batch: b, batches, orderCount }: { event: TabProps['
             <StatusPill status={b.status} />
             <Pill tone="blue">{b.mode === 'post' ? 'Post-event, mail only' : 'Preorder'}</Pill>
           </div>
+          {b.mode === 'preorder' && (
+            <Checkbox className="mt-2" label="List on the storefront" checked={b.storefront !== false} disabled={busy === 'storefront'} onChange={(e) => setListed(e.target.checked)} />
+          )}
           <div className="hint mt-1">{orderCount} orders · {offeringCount} on offer{offeringMissing > 0 && ` (${offeringMissing} refer to deleted items)`}</div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -131,8 +150,8 @@ function BatchCard({ event, batch: b, batches, orderCount }: { event: TabProps['
             <option value="post">Post-event (mail only)</option>
           </Select>
         </Field>
-        <Field label="Opens" hint="For reference only."><Input small type="date" value={b.opensAt} onChange={(e) => run(() => batchRepo.patch(b.id, { opensAt: e.target.value }, me))} /></Field>
-        <Field label="Closes"><Input small type="date" value={b.closesAt} onChange={(e) => run(() => batchRepo.patch(b.id, { closesAt: e.target.value }, me))} /></Field>
+        <Field label="Opens" hint="Forms and the storefront take orders from this day."><Input small type="date" value={b.opensAt} onChange={(e) => run(() => batchRepo.patch(b.id, { opensAt: e.target.value }, me))} /></Field>
+        <Field label="Closes" hint="…until the end of this day."><Input small type="date" value={b.closesAt} onChange={(e) => run(() => batchRepo.patch(b.id, { closesAt: e.target.value }, me))} /></Field>
       </div>
 
       <div className="mt-4 grid gap-4 md:grid-cols-2">

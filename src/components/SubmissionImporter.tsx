@@ -59,6 +59,12 @@ export function ImporterProvider({ children }: { children: React.ReactNode }) {
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
+/** Idle importer, for the localhost sandbox only. */
+export function StaticImporterProvider({ children }: { children: React.ReactNode }) {
+  const value = useMemo<ImporterState>(() => ({ pending: [], rejected: [], busy: false, errors: {}, importNow: async () => {} }), []);
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
 export function useImporter(): ImporterState {
   const c = useContext(Ctx);
   if (!c) throw new Error('useImporter outside ImporterProvider');
