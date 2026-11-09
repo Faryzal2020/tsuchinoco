@@ -40,7 +40,9 @@ export default function Button(props: ButtonProps | LinkProps) {
       </Link>
     );
   }
-  const { busy, disabled, type = 'button', ...rest } = props as ButtonProps;
+  // variant, size, className and children are handled above; the rest go to the element.
+  const { busy, disabled, type = 'button', variant: _v, size: _s, className: _c, children: _ch, ...rest } = props as ButtonProps;
+  void _v; void _s; void _c; void _ch;
   return (
     <button type={type} className={classes(variant, size, className)} disabled={disabled || busy} {...rest}>
       {busy ? 'Working…' : children}

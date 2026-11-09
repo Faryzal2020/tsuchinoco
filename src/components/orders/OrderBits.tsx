@@ -118,7 +118,7 @@ export function EmailLog({ order }: { order: Order }) {
     await run(async () => {
       const r = await fx.resendOrderEmail({ orderId: order.id, type });
       if (!r.ok) throw new Error(r.error || 'The e-mail was not sent.');
-    }, 'E-mail sent');
+    }, 'E-mail queued');
     setBusy('');
   };
   return (
@@ -130,7 +130,7 @@ export function EmailLog({ order }: { order: Order }) {
             <li key={i}>
               <span className="font-semibold">{NOTIFICATION_LABELS[e.type].title}</span>
               <span className="hint"> · {formatDateTime(e.at)}{e.by ? ' · sent again by staff' : ''}</span>
-              <span className="block">{e.skipped ? <span className="text-ink-2">Skipped by staff</span> : e.ok ? <span className="text-ink-2">Sent to {e.to}</span> : <span className="text-red-ink">Not sent: {e.error}</span>}</span>
+              <span className="block">{e.skipped ? <span className="text-ink-2">Skipped by staff</span> : e.queued ? <span className="text-yellow-ink">Waiting in the Outbox for {e.to}</span> : e.ok ? <span className="text-ink-2">Sent to {e.to}</span> : <span className="text-red-ink">Not sent: {e.error}</span>}</span>
             </li>
           ))}
         </ul>

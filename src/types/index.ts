@@ -63,6 +63,8 @@ export interface Staff {
   email: string;
   displayName: string;
   active: boolean;
+  /** Plain text added under every reply this staff member sends from the shared inbox. */
+  mailSignature?: string;
   createdAt: number;
   updatedAt: number;
   updatedBy: string;
@@ -539,6 +541,137 @@ export interface OrderEmail {
   ref?: number;
   /** Staff member who pressed "Send again"; absent for automatic e-mails. */
   by?: string;
+  /** Waiting in the send queue; cleared when it is sent or fails. */
+  queued?: boolean;
+  /** The `mailMessages` document that carries it. */
+  mailId?: string;
+}
+
+// ---- Mail: shared inbox and send queue ----
+
+export type MailFolder = 'inbox' | 'archive' | 'spam';
+export type MailStatus = 'received' | 'queued' | 'sending' | 'sent' | 'delivered' | 'failed' | 'bounced' | 'complained';
+/** `contact`: the /shop/ contact form (no e-mail involved). Outgoing sources also set queue priority. */
+export type MailSource = 'inbound' | 'contact' | 'staff' | 'order' | 'broadcast';
+
+export interface MailAttachment {
+  name: string;
+  type: string;
+  size: number;
+  /** Storage path under mail/; empty when the file could not be copied. */
+  path: string;
+}
+
+/** mailThreads/{id}: one conversation with one outside address. Shared by every staff member. */
+export interface MailThread {
+  id: string;
+  subject: string;
+  /** The outside address, lower-cased. */
+  counterpart: string;
+  counterpartName?: string;
+  folder: MailFolder;
+  /** `blocked-sender`, `resend-spam`, `send-failed`, `bounced`, `complained`, `delayed`. */
+  flags: string[];
+  spamReason?: string;
+  unread: boolean;
+  /** Staff email → when they opened the reply box. Entries older than 10 minutes are stale. */
+  replying?: Record<string, number>;
+  /** The thread in the Resend inbox, once there is one. */
+  resendThreadId?: string;
+  /** Which of our inboxes it belongs to; absent means the shared admin@ inbox. */
+  inbox?: string;
+  /** Set when the thread started from the contact form. */
+  contactId?: string;
+  lastAt: number;
+  lastSnippet: string;
+  lastFrom: string;
+  messageCount: number;
+  createdAt: number;
+}
+
+/** mailMessages/{id}: one e-mail in either direction, or one contact-form message. Written by functions only. */
+export interface MailMessage {
+  id: string;
+  threadId?: string;
+  direction: 'in' | 'out';
+  status: MailStatus;
+  source: MailSource;
+  /** `inbox`: through the Resend inbox (replies thread there). `plain`: an ordinary send. */
+  via: 'inbox' | 'plain';
+  /** Lower 0 goes first: staff, then order updates, then broadcasts. */
+  priority: number;
+  /** Which of our inboxes it belongs to; absent means the shared admin@ inbox. */
+  inbox?: string;
+  from: string;
+  fromName?: string;
+  to: string[];
+  cc?: string[];
+  bcc?: string[];
+  replyTo?: string;
+  /** The outside address (first recipient, or the sender of inbound mail), lower-cased. */
+  counterpart: string;
+  subject: string;
+  text: string;
+  html?: string;
+  /** Storage path of the HTML when it was too large to keep inline. */
+  htmlPath?: string;
+  attachments: MailAttachment[];
+  /** RFC Message-ID of inbound mail. */
+  messageId?: string;
+  /** Resend's id for this e-mail (inbound or sent). */
+  resendId?: string;
+  resendThreadId?: string;
+  /** For a reply through the Resend inbox: the e-mail in that thread being answered. */
+  replyToResendEmailId?: string;
+  error?: string;
+  flags?: string[];
+  sentBy?: string;
+  orderId?: string;
+  orderEmailType?: NotificationType;
+  broadcastId?: string;
+  attempts?: number;
+  queuedAt?: number;
+  claimedAt?: number;
+  sentAt?: number;
+  at: number;
+}
+
+/** One of the inboxes set up in Resend. `name` is shown in the app and is also the From name. */
+export interface MailInboxInfo {
+  address: string;
+  name: string;
+}
+
+/** mailQuota/{yyyy-mm-dd} and mailQuota/m-{yyyy-mm}, in UTC. */
+export interface MailQuota {
+  sent: number;
+  received: number;
+  /** Resend refused for quota: wait until then. */
+  blockedUntil?: number;
+}
+
+export interface MailSettings {
+  domain: string;
+  adminLocalPart: string;
+  automatedLocalPart: string;
+  fromName: string;
+  dailyLimit: number;
+  monthlyLimit: number;
+  /** Addresses (`a@b.com`) or whole domains (`@b.com`). */
+  blockedSenders: string[];
+}
+
+/** contactSubmissions/{id}: the /shop/ contact form. */
+export interface ContactSubmission {
+  id: string;
+  name: string;
+  email: string;
+  subject: string;
+  message: string;
+  orderRef?: string;
+  status: 'new' | 'filed' | 'spam';
+  threadId?: string;
+  submittedAt: number;
 }
 
 export interface Courier {
@@ -650,6 +783,8 @@ export interface Settings {
   emailTemplates?: EmailTemplate[];
   storefront?: StorefrontSettings;
   notifications?: Partial<Record<NotificationType, NotificationSetting>>;
+  /** Shared inbox and send queue; defaults in src/lib/mail.ts. */
+  mail?: Partial<MailSettings>;
 }
 
 export const DEFAULT_SETTINGS: Settings = {

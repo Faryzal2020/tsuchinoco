@@ -23,12 +23,15 @@ export function Meter({
   limit,
   format = fmtCount,
   sub,
+  per,
 }: {
   label: string;
   used: number | null | undefined;
   limit: number;
   format?: (n: number) => string;
   sub?: React.ReactNode;
+  /** Quota period shown after the limit, e.g. "day" → "/ 50,000 free per day". */
+  per?: 'day' | 'month';
 }) {
   const known = typeof used === 'number';
   const pct = known ? (used / limit) * 100 : 0;
@@ -38,7 +41,7 @@ export function Meter({
       <div className="flex items-baseline justify-between gap-3 text-sm">
         <span className="font-semibold">{label}</span>
         <span className="tabular-nums text-ink-2">
-          {known ? <b className="text-ink">{format(used)}</b> : '—'} / {format(limit)}
+          {known ? <b className="text-ink">{format(used)}</b> : '—'} / {format(limit)}{per ? ` free per ${per}` : ' free'}
         </span>
       </div>
       <div

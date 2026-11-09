@@ -72,6 +72,56 @@ Order type, payment and tracking on every order; Orders page opens on Unfulfille
 
 Submissions become orders on the server within seconds; the browser importer is a 2-minute fallback. Order-update e-mails (received, paid, delivered with tracking) with switches and templates in Settings, a skip checkbox in the Delivered dialog, an e-mail log and "Send again" on each order.
 
+## Mail phase — shared inbox and send queue (built 2026-11-05, uncommitted)
+
+Staff read and answer customer e-mail on the Emails page (Inbox tab) instead of a separate mailbox. Every e-mail the app sends goes through one queue that keeps to Resend's free-plan limits: staff replies, broadcasts and order updates. The data model is in the "Mail" section of `docs/DATA-MODEL.md`. The localhost sandbox has it at `/sandbox/emails/`, and the shop's contact form at `/sandbox/shop/` files into it.
+
+**Decisions (2026-11-05)**
+
+- **One shared inbox, one communication address: `admin@tsuchinoco.xyz`.** Every active staff member sees all mail sent and received. `admin@` is the only Resend inbox (the free plan allows 3) and the only address staff send and receive through; there are no per-staff addresses. Each message records which staff member sent it.
+- **`orders@` sends automated mail** (order updates now, more notifications later). It replaces the earlier `noreply@` and `system@`. It has no inbox and always carries `Reply-To: admin@`. Mail sent straight to it is not received. The other 2 free inboxes stay unused for now.
+- **Replies are signed.** Each staff member sets a signature on the Settings page; it goes under every reply they send.
+- **No two staff answer the same thread at once.** While someone writes a reply, the thread shows "Rina is replying". Sending warns if a new message arrived, or someone else is replying, since the reply box was opened.
+- **Folders:** Inbox, Outbox (waiting), Sent, Failed (refused, bounced, complained), Spam, Archive. Spam holds blocked senders and whatever Resend's own filter marks as spam. Each move to Spam or Failed shows its reason.
+- **A contact form on `/shop/`** files messages straight into the Inbox with no e-mail, so they use none of the quota. `admin@` is not printed on any public page.
+- **Free plan** (100 e-mails a day, 3,000 a month; received mail counts too). Sends past the budget wait in the Outbox and go out after the UTC midnight reset (07:00 WIB). Priority order: staff mail, then order updates, then broadcasts.
+
+**How it works**
+
+- **Resend Inboxes keeps the threads.** Mail to `admin@` arrives through the `inbox.email.received` webhook. Staff replies go out through the inbox reply API, which sets `In-Reply-To` and `References` itself. A new message, or the first reply to a contact-form message, goes out as an inbox draft. No custom `Message-ID` is needed.
+- **Copies stay with us.** Resend deletes received mail after 30 days, so the webhook copies each message into Firestore and its attachments into Storage.
+- **The queue** sends staff and order messages the moment they are queued while the budget lasts. Broadcasts are sent by `queueBroadcast` itself, in batches of up to 100. Whatever is left waits for `drainMailQueue`, which runs every 15 minutes. The broadcast confirmation shows how many go out now and when the rest follow.
+- **Mail bodies** are shown in a sandboxed frame: scripts never run, and remote images stay hidden until "Load images". Each thread shows the orders placed with the sender's address, and "Open in Orders" searches the Orders page for that address.
+- **Removed:** the browser's direct calls to Resend from the old broadcast page, and the `sendBroadcastEmail` function.
+
+**Added the same day:** a picker for the inboxes set up in Resend (`admin@`, `support@`, `jknor@`), each with its own folders and unread count. Inbox names are set in Mail settings and saved in Resend, where they are also the From name. Replies go out from the thread's inbox. New messages and replies can carry Cc, Bcc and attachments. Attachments are up to 10 files and 20 MB in all, uploaded to Storage first. Broadcasts have no attachments: Resend's batch endpoint does not take them. The Inbox fills the window on desktop, with independently scrolling columns.
+
+**Setup before going live (by hand)**
+
+1. Resend › Domains › `tsuchinoco.xyz`: turn on receiving and add the MX record it shows at Rumahweb on the root host. The domain has no MX record today, so nothing conflicts.
+2. Resend › Inboxes: create the `admin@tsuchinoco.xyz` inbox, with "Tsuchinoco" as its From name. Replies use the inbox's From name.
+3. Resend › Webhooks: add `https://asia-southeast1-<project-id>.cloudfunctions.net/mailWebhook` with these events:
+   - `inbox.email.received`, `inbox.email.sent`, `inbox.thread.folder_updated`
+   - `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`, `email.failed`, `email.suppressed`
+
+   Put its signing secret in `functions/.env` as `RESEND_WEBHOOK_SECRET`.
+4. Deploy `firestore.rules`, `firestore.indexes.json` and `storage.rules` first, then the functions, then hosting. The deploy will offer to delete `sendBroadcastEmail`; accept. Wait for the new indexes to finish building before using the Inbox.
+5. Check the Mail settings modal on the Emails page (sender name, addresses, limits, API key). Each staff member sets their signature in Settings.
+6. Later, once sending looks clean, tighten DMARC from the current `p=none`.
+
+**Not yet verified against live Resend** (check with the first real messages)
+
+- That `resend.emails.receiving.attachments.list` accepts an inbox e-mail's id. If it does not, attachments show as "not saved" and need the inbox attachment endpoint instead.
+- That inbox replies and drafts fire `email.*` delivery events with the same id the send returned. Until they do, those messages stay at "Sent" rather than "Delivered".
+- Whether received mail really counts against the 100-a-day cap, and what Resend does with inbound mail once the cap is reached.
+- That Resend's daily quota resets at UTC midnight, and the exact quota error names (the queue handles `daily_quota_exceeded` and `monthly_quota_exceeded`).
+- The inbox's From name on replies, which is set in Resend rather than in the app.
+
+**Limits to keep in mind**
+
+- The Inbox lists the latest 300 threads and the latest 300 outgoing messages; older ones stay in Firestore but are not shown.
+- A broadcast is limited to 3,000 recipients, and the server only gets about 4 minutes per run to send what the budget allows; the rest follows on the 15-minute runs.
+
 ## Later and undecided
 
 - Customer-choice bundles ("any 3 keychains") on the form. Needs a decision on the data model first.

@@ -359,3 +359,86 @@ Design: https://claude.ai/artifact/Rr9Gkay3xdr4oYD7cVWtq6
 - **`resendOrderEmail`** (callable, staff only): "Send again" from the order view; records the attempt with `by`.
 - **Build**: the functions compile with `rootDir: ".."` so they include the shared modules; the entry point is `functions/lib/functions/src/index.js`. Shared modules import values by relative path (types via `@/types` are erased). Firestore triggers deploy to `FIRESTORE_REGION` from `functions/.env` (default `asia-southeast1`), which must match the database location.
 
+
+## Mail: shared inbox and send queue (built 2026-11-05)
+
+The phase plan is in `docs/ROADMAP.md` ("Mail phase"). There is one Resend inbox, `admin@`, and Resend Inboxes keeps its threads: replies go out through the inbox API, so they thread in the customer's mail app. `orders@` only sends automated mail, with `Reply-To: admin@`. All mail is shared: any active staff member reads every collection below. Clients only change a thread's `folder`, `unread`, `flags`, `spamReason` and `replying`; every other mail write comes from functions. Pure helpers (addresses, quota maths, text) are in `src/lib/mail.ts`, shared by both sides.
+
+### `mailThreads/{id}`
+
+The id is Resend's thread id for mail that arrived by e-mail, `c_<contactId>` for the contact form, and a random id for a new message staff wrote.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `subject` | string | |
+| `counterpart`, `counterpartName` | string | The outside address, lower-cased, and its name |
+| `folder` | `inbox` \| `archive` \| `spam` | Outbox, Sent and Failed are message views, not folders. New mail moves an archived thread back to the Inbox; spam stays spam |
+| `flags` | string[] | `blocked-sender`, `resend-spam`, `send-failed`, `bounced`, `complained`, `delayed` |
+| `spamReason` | string? | Shown in Spam |
+| `unread` | boolean | Shared, not per staff member |
+| `replying` | `{ [staffEmail]: number }` | When each staff member opened the reply box; refreshed every 5 minutes, ignored after 10 |
+| `inbox` | string? | Which inbox it belongs to; absent means the shared `admin@` |
+| `resendThreadId` | string? | Resend's thread. A thread that starts here (new message, contact form) gets it from the `inbox.email.sent` event, or when the customer's reply arrives |
+| `contactId` | string? | Started from the `/shop/` contact form |
+| `lastAt`, `lastSnippet`, `lastFrom`, `messageCount`, `createdAt` | | For the list |
+
+### `mailMessages/{id}`
+
+One document per e-mail in either direction, or per contact-form message. Inbound ids are `in_<resendEmailId>`, so a retried webhook never files twice.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `threadId` | string? | Broadcast and order messages get one only when the customer replies with the same subject |
+| `direction` | `in` \| `out` | |
+| `status` | `received` \| `queued` \| `sending` \| `sent` \| `delivered` \| `failed` \| `bounced` \| `complained` | |
+| `source` | `inbound` \| `contact` \| `staff` \| `order` \| `broadcast` | |
+| `via` | `inbox` \| `plain` | `inbox`: through the Resend inbox (staff replies and new messages). `plain`: an ordinary send (order updates, broadcasts, tests) |
+| `priority` | number | 0 staff, 1 order updates, 2 broadcasts |
+| `inbox` | string? | The inbox it belongs to (`support@…`); absent means the shared `admin@` |
+| `from`, `fromName`, `to[]`, `cc[]`, `bcc[]`, `replyTo?` | | `replyTo` is `admin@` on order updates |
+| `counterpart` | string | The outside address, lower-cased |
+| `subject`, `text` | string | |
+| `html` / `htmlPath` | string? | Inline up to 400 KB; above that the HTML is in Storage at `mail/<id>/body.html` |
+| `attachments` | `{ name, type, size, path }[]` | Received: copied to Storage under `mail/<id>/`, `path` empty when the copy failed. Sent: uploaded by staff under `mail/out/<uploadId>/` (up to 10 files, 20 MB in all) and attached by the queue at send time |
+| `messageId` | string? | RFC Message-ID of inbound mail |
+| `resendId`, `resendThreadId`, `replyToResendEmailId` | string? | Resend's ids; the last is the e-mail a reply answers |
+| `error`, `flags`, `attempts`, `queuedAt`, `claimedAt`, `sentAt`, `at` | | |
+| `sentBy` | string? | Staff email; every staff message goes out as `admin@`, so this is how a reply is traced to a person |
+| `orderId`, `orderEmailType`, `broadcastId` | string? | Back-links |
+
+### `mailQuota/{yyyy-mm-dd}` and `mailQuota/m-{yyyy-mm}` (UTC)
+
+`{ sent, received, blockedUntil? }`. Claiming a queued message adds to `sent` in the same transaction; a send Resend refuses gives the slot back. Each received e-mail adds to `received`. The budget is the smaller of `dailyLimit − sent − received` and the same for the month. A quota error from Resend sets `blockedUntil` to the next UTC midnight (or month start), whatever the counters say.
+
+### `contactSubmissions/{id}`
+
+Written by the `/shop/` contact form: any signed-in user, anonymous included, may create one document that passes validation; only staff read it.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `name`, `email`, `subject`, `message` | string | At most 120, 160, 200 and 5,000 characters |
+| `orderRef` | string? | Order number or confirmation code the customer typed |
+| `status` | `new` \| `filed` \| `spam` | Set by the trigger |
+| `threadId` | string? | Set once filed |
+| `submittedAt`, `createdAt` | | `createdAt` is server time |
+
+### Additions to existing documents
+
+- **`staff/{email}.mailSignature`**: plain text added under each reply that staff member sends. Set on the Settings page.
+- **`settings/global.mail`**: `{ domain, adminLocalPart ('admin'), automatedLocalPart ('orders'), fromName, dailyLimit (100), monthlyLimit (3000), blockedSenders[] }`, set in Mail settings on the Emails page. `resendApiKey` stays where it was; it falls back to `RESEND_API_KEY` in `functions/.env`. `resendFromEmail` and `resendReplyTo` are no longer used.
+- **`orders.emails[]`** entries gain `queued` and `mailId`. An entry is written when the e-mail is queued; the queue clears `queued` and sets `ok`, `id` or `error` when it is sent, fails or bounces.
+
+### Functions (`functions/src/mail.ts`)
+
+- **`mailWebhook`** (HTTPS, asia-southeast1): Resend's single webhook endpoint, verified with `RESEND_WEBHOOK_SECRET` from `functions/.env`.
+  - `inbox.email.received` fetches the message through the inbox API, copies attachments, files it into its thread, and applies the block list and Resend's spam verdict.
+  - `inbox.email.sent` records the Resend thread of a message we started.
+  - `inbox.thread.folder_updated` mirrors a move to spam made in Resend.
+  - `email.*` delivery events update the message's status, the thread's flags and the order's log.
+- **`queueMail`** (callable, staff only): a reply (from the thread's inbox) or a new message (from the chosen inbox, checked against Resend), with Cc, Bcc, uploaded attachments, the caller's signature and the earlier message quoted.
+- **`listMailInboxes`** / **`renameMailInbox`** (callables, staff only): the inboxes set up in Resend, `admin@` first, with their names; renaming sets the inbox's name and From name in Resend. Inboxes themselves are added in Resend.
+- **`queueBroadcast`** (callable, staff only): personalises and queues a broadcast, sends what today's budget allows, and returns `{ queued, sentNow, waiting, resetAt }`. With `test`, it sends one copy to the caller. It replaces `sendBroadcastEmail`, which no longer exists.
+- **`mailQueueOnCreate`** (trigger): sends a new staff or order message straight away when the budget allows.
+- **`drainMailQueue`** (every 15 minutes): puts sends stuck in `sending` for 10 minutes back in the queue, then sends what is waiting in priority order. Plain mail goes up to 100 at a time through the batch endpoint. Every send carries an idempotency key, so a retry never sends twice.
+- **`contactOnCreate`** (trigger): files a contact-form message as a thread with one `contact` message. No e-mail is used, so it costs no quota.
+- **Order e-mails** (`functions/src/orders.ts`) are queued from `orders@` instead of sent directly.

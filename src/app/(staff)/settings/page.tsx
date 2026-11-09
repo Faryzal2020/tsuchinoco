@@ -12,6 +12,8 @@ import { dataUrlToBlob } from '@/lib/media';
 import { COL, settingsRepo, staffRepo } from '@/lib/repo';
 import { usePrefs } from '@/lib/prefs';
 import { FREE_LIMITS, FREE_STORAGE_REGIONS, useUsageReport } from '@/lib/usage';
+import { meterRead } from '@/lib/readMeter';
+import BrowserReadsPanel from '@/components/settings/BrowserReadsPanel';
 import { DailyBars, Meter, fmtBytes, fmtCount } from '@/components/settings/UsageMeters';
 import type { Media } from '@/types';
 import Button from '@/components/ui/Button';
@@ -105,6 +107,8 @@ export default function SettingsPage() {
             </div>
           </Panel>
 
+          <SignaturePanel />
+
           <StorefrontPanel />
 
           <NotificationsPanel />
@@ -112,6 +116,8 @@ export default function SettingsPage() {
           <CloudStoragePanel usage={usage} />
 
           <UsageTrafficPanel usage={usage} />
+
+          <BrowserReadsPanel />
 
           <Panel>
             <h2 className="font-bold mb-1">JotForm connection (legacy)</h2>
@@ -171,6 +177,7 @@ function CloudStoragePanel({ usage }: { usage: Usage }) {
     setLoading(true);
     try {
       const snap = await getDocs(collection(db, COL.media));
+      meterRead('settings:media', snap.size);
       let inStorage = 0;
       let inline = 0;
       let storageBytes = 0;
@@ -188,15 +195,12 @@ function CloudStoragePanel({ usage }: { usage: Usage }) {
     }
   };
 
-  useEffect(() => {
-    checkMedia();
-  }, []);
-
   const migrateMedia = async () => {
     setMigrating(true);
     setProgress('Finding inline media…');
     await run(async () => {
       const snap = await getDocs(collection(db, COL.media));
+      meterRead('settings:media', snap.size);
       const unmigrated: { id: string; data: Media }[] = [];
       snap.forEach((d) => {
         const m = { id: d.id, ...(d.data() as Omit<Media, 'id'>) };
@@ -255,14 +259,16 @@ function CloudStoragePanel({ usage }: { usage: Usage }) {
           <span className="text-ink-2 font-medium">Bucket:</span>
           <span className="mono">{bucket || 'Not configured'}</span>
         </div>
-        {stats && (
-          <div className="flex items-center gap-2">
-            <span className="text-ink-2 font-medium">Media:</span>
+        <div className="flex items-center gap-2">
+          <span className="text-ink-2 font-medium">Media:</span>
+          {stats ? (
             <span>
               <b>{stats.storage}</b> in Cloud Storage ({fmtBytes(stats.storageBytes)}) · <b>{stats.inline}</b> inline in Firestore ({fmtBytes(stats.inlineBytes)}) · total {stats.total}
             </span>
-          </div>
-        )}
+          ) : (
+            <span className="text-muted">Not counted. Counting reads every media record once.</span>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-4 border-t border-line pt-3 mb-3">
@@ -282,9 +288,9 @@ function CloudStoragePanel({ usage }: { usage: Usage }) {
           format={fmtBytes}
           sub={r?.storage.objects != null ? `${fmtCount(r.storage.objects)} files, includes receipts and soft-deleted copies` : 'Includes receipts and soft-deleted copies'}
         />
-        <Meter label="Downloaded this month" used={r?.storage.egressMonth} limit={L.egressPerMonth} format={fmtBytes} sub="Images served to the form and staff app" />
-        <Meter label="Upload operations this month" used={r?.storage.classAMonth} limit={L.uploadsPerMonth} sub="Uploads, listings and metadata changes (Class A)" />
-        <Meter label="Download operations this month" used={r?.storage.classBMonth} limit={L.downloadsPerMonth} sub="File and metadata reads (Class B)" />
+        <Meter label="Downloaded this month" used={r?.storage.egressMonth} limit={L.egressPerMonth} per="month" format={fmtBytes} sub="Images served to the form and staff app" />
+        <Meter label="Upload operations this month" used={r?.storage.classAMonth} limit={L.uploadsPerMonth} per="month" sub="Uploads, listings and metadata changes (Class A)" />
+        <Meter label="Download operations this month" used={r?.storage.classBMonth} limit={L.downloadsPerMonth} per="month" sub="File and metadata reads (Class B)" />
         {r && r.storage.ops.length > 0 && (
           <details className="text-xs text-muted -mt-2">
             <summary className="cursor-pointer">Operations by type this month</summary>
@@ -307,8 +313,11 @@ function CloudStoragePanel({ usage }: { usage: Usage }) {
       </div>
 
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={() => { checkMedia(); usage.refresh(); }} busy={loading || usage.loading} disabled={migrating}>
+        <Button size="sm" onClick={usage.refresh} busy={usage.loading} disabled={migrating}>
           Refresh status
+        </Button>
+        <Button size="sm" onClick={checkMedia} busy={loading} disabled={migrating}>
+          {stats ? 'Count media again' : 'Count media'}
         </Button>
         {stats && stats.inline > 0 && (
           <Button size="sm" variant="primary" onClick={migrateMedia} busy={migrating}>
@@ -352,24 +361,24 @@ function UsageTrafficPanel({ usage }: { usage: Usage }) {
       {r && (
         <div className="grid gap-5">
           <section className="grid gap-3">
-            <h3 className="text-sm font-bold">Firestore today</h3>
-            <Meter label="Document reads" used={r.firestore.reads} limit={F.readsPerDay} sub="Every document a page or form loads" />
-            <Meter label="Document writes" used={r.firestore.writes} limit={F.writesPerDay} sub="Orders, submissions, edits, logs" />
-            <Meter label="Document deletes" used={r.firestore.deletes} limit={F.deletesPerDay} />
+            <h3 className="text-sm font-bold">Firestore today{reset ? <span className="font-normal text-muted"> · counters reset at {reset}</span> : null}</h3>
+            <Meter label="Document reads" used={r.firestore.reads} limit={F.readsPerDay} per="day" sub="Every document a page or form loads" />
+            <Meter label="Document writes" used={r.firestore.writes} limit={F.writesPerDay} per="day" sub="Orders, submissions, edits, logs" />
+            <Meter label="Document deletes" used={r.firestore.deletes} limit={F.deletesPerDay} per="day" />
             <DailyBars label="Reads per day" days={r.firestore.daily.reads} today={r.firestore.reads} />
             <DailyBars label="Writes per day" days={r.firestore.daily.writes} today={r.firestore.writes} />
           </section>
 
           <section className="grid gap-3 border-t border-line pt-3">
             <h3 className="text-sm font-bold">Website traffic</h3>
-            <Meter label="Hosting transfer today" used={r.hosting.egressToday} limit={FREE_LIMITS.hosting.egressPerDay} format={fmtBytes} sub="App and public form pages served" />
+            <Meter label="Hosting transfer today" used={r.hosting.egressToday} limit={FREE_LIMITS.hosting.egressPerDay} per="day" format={fmtBytes} sub="App and public form pages served" />
             <DailyBars label="Hosting transfer per day" days={r.hosting.egressDaily} today={r.hosting.egressToday} format={fmtBytes} />
             <DailyBars label="Image downloads per day (Cloud Storage)" days={r.storage.egressDaily} format={fmtBytes} />
           </section>
 
           <section className="grid gap-3 border-t border-line pt-3">
             <h3 className="text-sm font-bold">Cloud Functions this month</h3>
-            <Meter label="Invocations" used={r.functions.requestsMonth} limit={FREE_LIMITS.functions.invocationsPerMonth} sub="Email broadcasts and this usage check" />
+            <Meter label="Invocations" used={r.functions.requestsMonth} limit={FREE_LIMITS.functions.invocationsPerMonth} per="month" sub="Email broadcasts and this usage check" />
             {r.functions.byService.length > 0 && (
               <div className="grid gap-0.5 text-xs">
                 {r.functions.byService.map((f) => (
@@ -395,6 +404,23 @@ function UsageTrafficPanel({ usage }: { usage: Usage }) {
           )}
         </div>
       )}
+    </Panel>
+  );
+}
+
+/** The signed-in staff member's reply signature for the shared inbox. */
+function SignaturePanel() {
+  const { state, me } = useAuth();
+  const { run } = useToast();
+  const saved = state.phase === 'ready' ? state.staff.mailSignature ?? '' : '';
+  const [text, setText] = useState(saved);
+  useEffect(() => { setText(saved); }, [saved]);
+  return (
+    <Panel>
+      <h2 className="font-bold">Your reply signature</h2>
+      <p className="hint mb-3">Added under every reply you send from the shared inbox, so customers know who answered. Only you see and change yours.</p>
+      <textarea className="textarea" rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder={'— Rina, Tsuchinoco'} maxLength={500} />
+      <div className="mt-2"><Button variant="primary" disabled={text === saved} onClick={() => run(() => staffRepo.patch(me, { mailSignature: text.trim() }, me), 'Signature saved')}>Save signature</Button></div>
     </Panel>
   );
 }

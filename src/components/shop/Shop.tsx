@@ -12,6 +12,8 @@ import { formatMoney, titleCase } from '@/lib/format';
 import './shop.css';
 
 export type ShopDraft = Omit<Submission, 'id'>;
+/** A message from the contact form; it lands in the staff's shared inbox. */
+export type ContactDraft = { name: string; email: string; subject: string; message: string; orderRef?: string };
 
 export interface ShopProps {
   catalog: StoreCatalog;
@@ -19,6 +21,8 @@ export interface ShopProps {
   docs: Record<string, PublicForm | null | undefined>;
   prices: PublicPrices | null;
   onSubmit: (choice: StoreChoice, draft: ShopDraft, proof?: File) => Promise<void>;
+  /** The contact form; without it the shop shows no "Contact us". */
+  onContact?: (c: ContactDraft) => Promise<void>;
   /** Fixed clock for the sandbox; real time otherwise. */
   now?: number;
   /** Shown above the page, e.g. the sandbox notice. */
@@ -33,7 +37,7 @@ const write = (k: string, v: string) => { try { localStorage.setItem(k, v); } ca
 
 interface Priced { variant: StoreVariant; product: StoreProduct; price: StorePrice; orderable: boolean }
 
-export default function Shop({ catalog, status, docs, prices, onSubmit, now, notice }: ShopProps) {
+export default function Shop({ catalog, status, docs, prices, onSubmit, onContact, now, notice }: ShopProps) {
   const [clock, setClock] = useState(() => now ?? Date.now());
   useEffect(() => { if (now !== undefined) { setClock(now); return; } const t = setInterval(() => setClock(Date.now()), 60_000); return () => clearInterval(t); }, [now]);
   const state = useMemo(() => storeState(catalog, status, docs, clock), [catalog, status, docs, clock]);
@@ -104,6 +108,7 @@ export default function Shop({ catalog, status, docs, prices, onSubmit, now, not
   const total = okLines.reduce((s, l) => s + l.qty * l.p!.price.unitPrice, 0);
   const [open, setOpen] = useState(false);
   const [done, setDone] = useState<{ code: string; lines: typeof okLines; total: number; label: string } | null>(null);
+  const [contactOpen, setContactOpen] = useState(false);
 
   return (
     <div className="shop">
@@ -111,7 +116,10 @@ export default function Shop({ catalog, status, docs, prices, onSubmit, now, not
       <header className="shop-head">
         <h1 className="shop-title">{catalog.title || 'Shop'}</h1>
         {catalog.intro && <p className="shop-intro">{catalog.intro}</p>}
+        {onContact && !contactOpen && <p className="shop-intro"><button type="button" className="shop-link" onClick={() => setContactOpen(true)}>Contact us</button> with a question about an item or your order.</p>}
       </header>
+
+      {onContact && contactOpen && <ContactForm onSend={onContact} onClose={() => setContactOpen(false)} />}
 
       {done ? (
         <ThankYou done={done} currency={catalog.currency} onBack={() => setDone(null)} />
@@ -426,6 +434,73 @@ function Checkout({ catalog, choice, okLines, badLines, total, max, setQty, remo
         <button type="submit" className="shop-btn shop-btn-primary shop-btn-wide" disabled={sending || okLines.length === 0}>
           {sending ? 'Sending…' : `Place ${isPre ? 'preorder' : 'mail order'} · ${formatMoney(total, catalog.currency)}`}
         </button>
+      </form>
+    </section>
+  );
+}
+
+const CONTACT_MAX = { name: 120, email: 160, subject: 200, message: 5000, orderRef: 40 };
+
+function ContactForm({ onSend, onClose }: { onSend: (c: ContactDraft) => Promise<void>; onClose: () => void }) {
+  const [c, setC] = useState({ name: '', email: '', subject: '', message: '', orderRef: '', website: '' });
+  const [err, setErr] = useState<Record<string, string>>({});
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const top = useRef<HTMLElement>(null);
+  useEffect(() => { top.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, []);
+
+  const submit = async (ev: React.FormEvent) => {
+    ev.preventDefault();
+    const e: Record<string, string> = {};
+    if (!c.name.trim()) e.name = 'Required';
+    if (!c.email.trim()) e.email = 'Required'; else if (!EMAIL_RE.test(c.email.trim())) e.email = 'That e-mail address does not look right.';
+    if (!c.message.trim()) e.message = 'Required';
+    setErr(e);
+    if (Object.keys(e).length > 0) return;
+    if (c.website) { setSent(true); return; } // honeypot: pretend it went
+    setSending(true);
+    try {
+      await onSend({
+        name: c.name.trim().slice(0, CONTACT_MAX.name), email: c.email.trim().slice(0, CONTACT_MAX.email),
+        subject: c.subject.trim().slice(0, CONTACT_MAX.subject) || 'Question from the shop', message: c.message.trim().slice(0, CONTACT_MAX.message),
+        ...(c.orderRef.trim() ? { orderRef: c.orderRef.trim().slice(0, CONTACT_MAX.orderRef) } : {}),
+      });
+      setSent(true);
+    } catch (x) {
+      console.error(x);
+      setErr({ submit: 'Could not send your message. Check your connection and try again.' });
+    } finally { setSending(false); }
+  };
+
+  if (sent) {
+    return (
+      <section ref={top} className="shop-thanks" aria-label="Message sent">
+        <h2>Message sent</h2>
+        <p>Thank you. We answer by e-mail to {c.email.trim() || 'the address you gave'}, usually within a day or two.</p>
+        <button type="button" className="shop-btn" onClick={onClose}>Back to the shop</button>
+      </section>
+    );
+  }
+  return (
+    <section ref={top} className="shop-checkout" aria-label="Contact us">
+      <div className="shop-checkout-head">
+        <h2>Contact us</h2>
+        <button type="button" className="shop-btn" onClick={onClose}>Close</button>
+      </div>
+      <p className="shop-hint">Questions about an item, a preorder or your order. We reply by e-mail.</p>
+      <form className="shop-form" onSubmit={submit} noValidate>
+        <Text id="ct-name" label="Name" value={c.name} onChange={(v) => setC({ ...c, name: v })} error={err.name} autoComplete="name" />
+        <Text id="ct-email" label="E-mail" type="email" value={c.email} onChange={(v) => setC({ ...c, email: v })} error={err.email} autoComplete="email" />
+        <Text id="ct-subject" label="Subject (optional)" value={c.subject} onChange={(v) => setC({ ...c, subject: v })} />
+        <Text id="ct-order" label="Order number or confirmation code (optional)" value={c.orderRef} onChange={(v) => setC({ ...c, orderRef: v })} />
+        <div className="shop-field">
+          <label htmlFor="ct-message">Message</label>
+          <textarea id="ct-message" rows={6} maxLength={CONTACT_MAX.message} value={c.message} onChange={(e) => setC({ ...c, message: e.target.value })} aria-invalid={!!err.message} />
+          {err.message && <span className="shop-error">{err.message}</span>}
+        </div>
+        <div className="shop-honeypot" aria-hidden="true"><label>Website <input tabIndex={-1} autoComplete="off" value={c.website} onChange={(e) => setC({ ...c, website: e.target.value })} /></label></div>
+        {err.submit && <p className="shop-error">{err.submit}</p>}
+        <button type="submit" className="shop-btn shop-btn-primary shop-btn-wide" disabled={sending}>{sending ? 'Sending…' : 'Send message'}</button>
       </form>
     </section>
   );

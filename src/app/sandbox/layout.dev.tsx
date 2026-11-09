@@ -6,6 +6,7 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import SandboxProvider, { useSandbox } from '@/components/sandbox/SandboxProvider';
+import { SandboxMailProvider } from '@/components/sandbox/SandboxMail';
 
 const LOCAL = ['localhost', '127.0.0.1', '[::1]'];
 const LINKS = [
@@ -13,6 +14,7 @@ const LINKS = [
   { href: '/sandbox/storefront/', label: 'Storefront (staff)' },
   { href: '/sandbox/shop/', label: 'Shop (customer)' },
   { href: '/sandbox/settings/', label: 'Order e-mails' },
+  { href: '/sandbox/emails/', label: 'Emails' },
 ];
 
 export default function SandboxLayout({ children }: { children: React.ReactNode }) {
@@ -20,7 +22,7 @@ export default function SandboxLayout({ children }: { children: React.ReactNode 
   useEffect(() => { setOk(LOCAL.includes(window.location.hostname)); }, []);
   if (ok === null) return null;
   if (!ok) return <p style={{ padding: 24 }}>The sandbox only runs on localhost.</p>;
-  return <SandboxProvider><Shell>{children}</Shell></SandboxProvider>;
+  return <SandboxProvider><SandboxMailProvider><Shell>{children}</Shell></SandboxMailProvider></SandboxProvider>;
 }
 
 function Shell({ children }: { children: React.ReactNode }) {

@@ -29,6 +29,12 @@ function CustomerForm() {
   const [prices, setPrices] = useState<PublicPrices | null | undefined>(undefined);
 
   useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.hostname === 'admin.tsuchinoco.xyz') {
+      window.location.replace(`https://tsuchinoco.xyz/f/${window.location.search}${window.location.hash}`);
+    }
+  }, []);
+
+  useEffect(() => {
     if (!isFirebaseConfigured) { setPrices(null); return; }
     return onSnapshot(doc(db, COL.publicPrices, 'current'),
       (s) => setPrices(s.exists() ? (s.data() as PublicPrices) : null),

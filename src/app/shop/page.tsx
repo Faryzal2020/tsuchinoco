@@ -8,7 +8,7 @@ import { signInAnonymously } from 'firebase/auth';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, db, isFirebaseConfigured, storage } from '@/lib/firebase';
 import { clean, COL } from '@/lib/repo';
-import Shop, { type ShopDraft } from '@/components/shop/Shop';
+import Shop, { type ContactDraft, type ShopDraft } from '@/components/shop/Shop';
 import type { PublicForm, PublicPrices, StoreCatalog, StoreStatus } from '@/types';
 
 export default function ShopPage() {
@@ -16,6 +16,12 @@ export default function ShopPage() {
   const [status, setStatus] = useState<StoreStatus | null>(null);
   const [prices, setPrices] = useState<PublicPrices | null>(null);
   const [docs, setDocs] = useState<Record<string, PublicForm | null>>({});
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.hostname === 'admin.tsuchinoco.xyz') {
+      window.location.replace(`https://tsuchinoco.xyz/shop/${window.location.search}${window.location.hash}`);
+    }
+  }, []);
 
   useEffect(() => {
     if (!isFirebaseConfigured) { setCatalog(null); return; }
@@ -58,5 +64,11 @@ export default function ShopPage() {
     await setDoc(subRef, { ...clean({ ...draft, paymentProofUrl }), createdAt: serverTimestamp() });
   };
 
-  return <Shop catalog={catalog} status={status} docs={docs} prices={prices} onSubmit={submit} />;
+  // The contact form writes one validated message; a function files it into the staff inbox.
+  const contact = async (c: ContactDraft) => {
+    if (!auth.currentUser) await signInAnonymously(auth);
+    await setDoc(doc(collection(db, COL.contactSubmissions)), { ...clean(c), status: 'new', submittedAt: Date.now(), createdAt: serverTimestamp() });
+  };
+
+  return <Shop catalog={catalog} status={status} docs={docs} prices={prices} onSubmit={submit} onContact={contact} />;
 }

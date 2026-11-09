@@ -113,7 +113,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <Gate>
       <TopBar />
-      <main className="mx-auto w-full max-w-[1680px] px-4 py-6 sm:px-6 lg:px-8">
+      <main className="mx-auto mt-0 w-full max-w-[1680px] px-4 pb-6 pt-2 sm:px-6 lg:px-8">
         <DataGate>{children}</DataGate>
       </main>
     </Gate>

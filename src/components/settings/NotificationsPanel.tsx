@@ -1,7 +1,7 @@
 'use client';
 
 // Order-update e-mails: one switch per update, which template it uses, and a preview with a
-// sample order. Sending happens on the server (functions/src/orders.ts) through Resend.
+// sample order. The server (functions/src/orders.ts) queues them; the mail queue sends them through Resend.
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth';
@@ -47,7 +47,7 @@ export default function NotificationsPanel() {
       <p className="hint mb-3">Sent automatically by the server when an order changes. Every e-mail is listed on its order, where staff can also send it again.</p>
       {!configured && (
         <p className="mb-3 rounded-md bg-yellow-soft px-3 py-2 text-sm text-yellow-ink">
-          Set the sender address and Resend key on the <Link href="/emails/" className="underline">Emails</Link> page first, or e-mails are recorded as not sent.
+          They come from the automatic address with replies going to the shared inbox. Set the Resend key in Mail settings on the <Link href="/emails/" className="underline">Emails</Link> page first, or e-mails are recorded as not sent.
         </p>
       )}
       <div className="grid gap-3">

@@ -10,7 +10,8 @@ export default function SandboxHome() {
       <div className="grid gap-4 md:grid-cols-3">
         <Panel><h2 className="font-bold mb-1"><Link className="text-blue-ink" href="/sandbox/orders/">Orders</Link></h2><p className="hint">Unfulfilled first, tabs per order type, payment, Mark delivered with tracking, mail-order hold.</p></Panel>
         <Panel><h2 className="font-bold mb-1"><Link className="text-blue-ink" href="/sandbox/storefront/">Storefront (staff)</Link></h2><p className="hint">What customers see and why, the mail-order switch and override, listed preorders, shop text.</p></Panel>
-        <Panel><h2 className="font-bold mb-1"><Link className="text-blue-ink" href="/sandbox/shop/">Shop (customer)</Link></h2><p className="hint">Search, filters, cart and checkout. A placed order shows up in Orders.</p></Panel>
+        <Panel><h2 className="font-bold mb-1"><Link className="text-blue-ink" href="/sandbox/shop/">Shop (customer)</Link></h2><p className="hint">Search, filters, cart and checkout. A placed order shows up in Orders; a contact-form message shows up in Emails.</p></Panel>
+        <Panel><h2 className="font-bold mb-1"><Link className="text-blue-ink" href="/sandbox/emails/">Emails</Link></h2><p className="hint">The shared inbox, Outbox, Sent, Failed and Spam, replies through the queue, and broadcasts.</p></Panel>
       </div>
     </>
   );

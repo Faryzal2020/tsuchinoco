@@ -404,7 +404,15 @@ export function formMediaIds(form: FormDoc, batch: Batch, items: Map<string, Ite
 }
 
 export const formPath = (formId: string) => `/f/?id=${formId}`;
-export const formUrl = (formId: string) => `${typeof window !== 'undefined' ? window.location.origin : ''}${formPath(formId)}`;
+export const formUrl = (formId: string) => {
+  if (typeof window !== 'undefined') {
+    if (window.location.hostname === 'admin.tsuchinoco.xyz') {
+      return `https://tsuchinoco.xyz${formPath(formId)}`;
+    }
+    return `${window.location.origin}${formPath(formId)}`;
+  }
+  return formPath(formId);
+};
 
 /** Confirmation code shown to the customer. Upper-case, no ambiguous letters. */
 export function confirmationCode(): string {

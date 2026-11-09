@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
+import { meteredDoc } from './readMeter';
 import { auth, db, googleProvider, isFirebaseConfigured } from './firebase';
 import type { Staff } from '@/types';
 
@@ -39,7 +40,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const id = user.email.toLowerCase();
     return onSnapshot(
       doc(db, 'staff', id),
-      (snap) => setStaff(snap.exists() ? ({ id: snap.id, ...(snap.data() as Omit<Staff, 'id'>) }) : null),
+      meteredDoc('myStaffRecord', (snap) => setStaff(snap.exists() ? ({ id: snap.id, ...(snap.data() as Omit<Staff, 'id'>) }) : null)),
       () => setStaff(null),
     );
   }, [user]);

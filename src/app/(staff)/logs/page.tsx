@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { collection, limit, onSnapshot, orderBy, query } from 'firebase/firestore';
+import { metered } from '@/lib/readMeter';
 import { db } from '@/lib/firebase';
 import { COL } from '@/lib/repo';
 import { useData } from '@/lib/data';
@@ -145,14 +146,14 @@ function LogsContent() {
 
     const unsub = onSnapshot(
       q,
-      (snap) => {
+      metered('logs', (snap) => {
         const rows = snap.docs.map((d) => ({
           id: d.id,
           ...d.data(),
         })) as LogEntry[];
         setLogs(rows);
         setLoading(false);
-      },
+      }),
       (err) => {
         console.error('[logs] Failed to read logs:', err);
         setLoading(false);

@@ -80,8 +80,44 @@ service cloud.firestore {
       allow write: if isStaff();
     }
 
+    // ---- Public exception 5: the /shop/ contact form. ----
+    // Any signed-in user (the shop signs in anonymously) creates one validated message; a function
+    // files it into the shared inbox. Only staff read them.
+    function validContact() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['name', 'email', 'subject', 'message', 'orderRef', 'status', 'submittedAt', 'createdAt'])
+        && d.keys().hasAll(['name', 'email', 'subject', 'message', 'status', 'submittedAt'])
+        && str(d.name, 120) && d.name.size() > 0
+        && str(d.email, 160) && d.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')
+        && str(d.subject, 200)
+        && str(d.message, 5000) && d.message.size() > 0
+        && (!('orderRef' in d) || str(d.orderRef, 40))
+        && d.status == 'new'
+        && d.submittedAt is number
+        && (!('createdAt' in d) || d.createdAt == request.time);
+    }
+    match /contactSubmissions/{id} {
+      allow create: if request.auth != null && validContact();
+      allow read: if isStaff();
+    }
+
+    // ---- Mail: written by functions. Staff read everything and only file threads. ----
+    // A thread update may change the folder, read state, flags and who is replying, nothing else.
+    match /mailThreads/{id} {
+      allow read: if isStaff();
+      allow update: if isStaff()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['folder', 'unread', 'flags', 'spamReason', 'replying'])
+        && request.resource.data.folder in ['inbox', 'archive', 'spam'];
+    }
+    match /mailMessages/{id} {
+      allow read: if isStaff();
+    }
+    match /mailQuota/{id} {
+      allow read: if isStaff();
+    }
+
     // ---- Append-only collections: logs and price history. ----
-    // Kept out of the catch-all below, because rules that match the same path add up:
+    // These and the mail collections above are kept out of the catch-all below, because rules that match the same path add up:
     // a catch-all "write" would otherwise allow updates and deletes here.
     match /logs/{id} {
       allow read, create: if isStaff();
@@ -91,7 +127,7 @@ service cloud.firestore {
     }
 
     match /{collection}/{document=**} {
-      allow read, write: if isStaff() && !(collection in ['logs', 'priceHistory']);
+      allow read, write: if isStaff() && !(collection in ['logs', 'priceHistory', 'contactSubmissions', 'mailThreads', 'mailMessages', 'mailQuota']);
     }
   }
 }

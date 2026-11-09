@@ -2,7 +2,7 @@
 import { httpsCallable } from 'firebase/functions';
 import { functions } from './firebase';
 import type { UsageReport } from './usage';
-import type { NotificationType, OrderEmail } from '@/types';
+import type { MailInboxInfo, NotificationType, OrderEmail } from '@/types';
 
 const call = <Req, Res>(name: string) => async (data: Req): Promise<Res> => {
   const fn = httpsCallable<Req, Res>(functions, name);
@@ -28,24 +28,23 @@ export const fx = {
     return { ok: false, message: 'JotForm functions have been disabled.' };
   },
 
-  // Active email broadcast callable
-  sendBroadcastEmail: call<
-    {
-      recipients: { email: string; name?: string; variables?: Record<string, string> }[];
-      subject: string;
-      html: string;
-      from: string;
-      replyTo?: string;
-      apiKey?: string;
-    },
-    {
-      ok: true;
-      total: number;
-      sentCount: number;
-      failedCount: number;
-      results: { email: string; success: boolean; id?: string; error?: string }[];
-    }
-  >('sendBroadcastEmail'),
+  /** A personalised send from admin@ through the mail queue; `test` sends one copy to the caller. */
+  queueBroadcast: call<
+    { recipients: { email: string; name?: string; variables?: Record<string, string> }[]; subject: string; html: string; test?: boolean },
+    { broadcastId: string; queued: number; sentNow: number; waiting: number; resetAt: number }
+  >('queueBroadcast'),
+
+  /** A staff reply in a thread (threadId) or a new message (to, subject) from an inbox, with the caller's signature. */
+  queueMail: call<
+    { threadId?: string; inbox?: string; to?: string; cc?: string; bcc?: string; subject?: string; body: string; attachments?: { path: string; name: string }[] },
+    { id: string; threadId: string }
+  >('queueMail'),
+
+  /** The inboxes set up in Resend, the shared admin@ first. An older server returned bare addresses. */
+  listMailInboxes: call<Record<string, never>, { inboxes: (MailInboxInfo | string)[] }>('listMailInboxes'),
+
+  /** Rename an inbox in Resend; the name is also the From name on its replies. */
+  renameMailInbox: call<{ address: string; name: string }, { address: string; name: string }>('renameMailInbox'),
 
   usageMetrics: call<Record<string, never>, UsageReport>('usageMetrics'),
 

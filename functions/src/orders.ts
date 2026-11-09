@@ -3,50 +3,20 @@
 //   it arrives, so orders no longer wait for a staff member to have the app open. Same pure code
 //   and same transaction shape as the staff browser's importer (src/lib/importer.ts), which stays
 //   as a fallback; whichever runs first wins and the other sees the submission is no longer new.
-// - orderEmailsOnWrite: sends the order-update e-mails staff switched on (received, paid,
-//   delivered) and records each one on the order.
+// - orderEmailsOnWrite: queues the order-update e-mails staff switched on (received, paid,
+//   delivered) and records each one on the order. The mail queue (functions/src/mail.ts) sends
+//   them from orders@ with Reply-To admin@ and writes the outcome back to the order.
 // - resendOrderEmail: "Send again" from the order view.
-import { getFirestore, FieldValue, type Transaction } from 'firebase-admin/firestore';
+import { FieldValue, type Transaction } from 'firebase-admin/firestore';
 import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions';
-import { Resend } from 'resend';
 import { buildImportedOrder, importTarget, itemIdsOf, newMonthBatch } from '../../src/lib/importCore';
 import { transactionId } from '../../src/lib/forms';
 import { emailRef, emailsDue, NOTIFICATION_TYPES, notificationsOf, orderEmailVars, renderEmail, templateFor } from '../../src/lib/orderEmail';
-import type { Batch, Event, Item, NotificationType, Order, OrderEmail, PublicPrices, Settings, Submission } from '../../src/types';
-
-// Firestore triggers must run in the database's region: the (default) database is in
-// asia-southeast2 (Jakarta). The callables in this codebase run in asia-southeast1.
-// FIRESTORE_REGION in functions/.env overrides it.
-const TRIGGER_REGION = process.env.FIRESTORE_REGION || 'asia-southeast2';
-const SYSTEM = 'system';
-
-const db = () => getFirestore();
-
-/** Firestore rejects undefined; strip it recursively. */
-function clean<T>(v: T): T {
-  if (Array.isArray(v)) return v.map(clean) as T;
-  if (v && typeof v === 'object' && !(v instanceof FieldValue)) {
-    const out: Record<string, unknown> = {};
-    for (const [k, x] of Object.entries(v as Record<string, unknown>)) if (x !== undefined) out[k] = clean(x);
-    return out as T;
-  }
-  return v;
-}
-
-async function logActivity(action: string, entityType: string, details: string, extra: { entityId?: string; entityName?: string } = {}) {
-  try {
-    await db().collection('logs').add(clean({ action, entityType, details, ...extra, createdAt: Date.now(), createdBy: SYSTEM }));
-  } catch (e) {
-    logger.warn('[log] could not write', e);
-  }
-}
-
-async function getSettings(): Promise<Settings> {
-  const s = await db().doc('settings/global').get();
-  return (s.exists ? s.data() : {}) as Settings;
-}
+import { adminAddress, automatedAddress, formatFrom, htmlToText, mailSettingsOf, PRIORITY } from '../../src/lib/mail';
+import { clean, db, getSettings, logActivity, resendKey, SYSTEM, TRIGGER_REGION } from './common';
+import type { Batch, Event, Item, MailMessage, NotificationType, Order, OrderEmail, PublicPrices, Settings, Submission } from '../../src/types';
 
 /** Items a set of lines needs, plus the components of any bundle among them. */
 async function loadItems(ids: string[]): Promise<Map<string, Item>> {
@@ -128,29 +98,32 @@ export const importSubmissionOnCreate = onDocumentCreated({ document: 'submissio
   if (result === 'rejected') await logActivity('update', 'submission', `Rejected invalid submission (${first.code}): ${reason}`, { entityId: id, entityName: `Submission ${first.code}` });
 });
 
-/** Send one order-update e-mail and describe the outcome. Never throws. */
-async function sendOrderEmail(order: Order, type: NotificationType, settings: Settings, ref: number, by?: string): Promise<OrderEmail> {
-  const to = (order.customer?.email ?? '').trim();
+/** Queue one order-update e-mail and describe it for the order's log. Never throws. */
+async function queueOrderEmail(order: Order, type: NotificationType, settings: Settings, ref: number, by?: string): Promise<OrderEmail> {
+  const to = (order.customer?.email ?? '').trim().toLowerCase();
   const base: OrderEmail = { type, to, at: Date.now(), ok: false, ref, ...(by ? { by } : {}) };
   if (!to) return { ...base, error: 'No e-mail address on the order.' };
-  const key = settings.resendApiKey?.trim() || process.env.RESEND_API_KEY;
-  const fromEmail = settings.resendFromEmail?.trim();
-  if (!key || !fromEmail) return { ...base, error: 'E-mail is not set up: add the Resend key and sender on the Emails page.' };
+  if (!resendKey(settings)) return { ...base, error: 'E-mail is not set up: add the Resend key in Mail settings on the Emails page.' };
   try {
     const [eventSnap, batchSnap, itemsById] = await Promise.all([
       db().doc(`events/${order.eventId}`).get(), db().doc(`batches/${order.batchId}`).get(), loadItems(order.rawLines.map((l) => l.itemId)),
     ]);
     const vars = orderEmailVars(order, { event: dataOf<Event>(eventSnap), batch: dataOf<Batch>(batchSnap), itemsById, currency: settings.currency || 'IDR' });
     const { subject, html } = renderEmail(templateFor(type, settings), vars);
-    const from = settings.resendFromName?.trim() ? `${settings.resendFromName.trim()} <${fromEmail}>` : fromEmail;
-    const res = await new Resend(key).emails.send({
-      from, to: order.customer.name ? `${order.customer.name} <${to}>` : to, subject, html, replyTo: settings.resendReplyTo?.trim() || undefined,
-    });
-    if (res.error) return { ...base, error: res.error.message };
-    return { ...base, ok: true, id: res.data?.id };
+    const m = mailSettingsOf(settings);
+    const now = Date.now();
+    const mailRef = db().collection('mailMessages').doc();
+    const msg: Omit<MailMessage, 'id'> = {
+      direction: 'out', status: 'queued', source: 'order', via: 'plain', priority: PRIORITY.order,
+      from: formatFrom(m.fromName, automatedAddress(m)), fromName: m.fromName, replyTo: adminAddress(m),
+      to: [formatFrom(order.customer.name, to)], counterpart: to, subject, html, text: htmlToText(html), attachments: [],
+      orderId: order.id, orderEmailType: type, attempts: 0, queuedAt: now, at: now, ...(by ? { sentBy: by } : {}),
+    };
+    await mailRef.set(clean(msg));
+    return { ...base, ok: true, queued: true, mailId: mailRef.id };
   } catch (e) {
     logger.error('[order-email]', order.id, type, e);
-    return { ...base, error: e instanceof Error ? e.message : 'Send failed' };
+    return { ...base, error: e instanceof Error ? e.message : 'Could not queue the e-mail' };
   }
 }
 
@@ -171,7 +144,7 @@ export const orderEmailsOnWrite = onDocumentWritten({ document: 'orders/{id}', r
     if ((after.emails ?? []).some((e) => e.type === type && e.ref === ref && !e.by)) continue; // a retry: already handled
     if (!switches[type].on) continue;
     if (skip.includes(type)) { entries.push({ type, to: after.customer?.email ?? '', at: Date.now(), ok: false, skipped: true, ref }); continue; }
-    entries.push(await sendOrderEmail(after, type, settings, ref));
+    entries.push(await queueOrderEmail(after, type, settings, ref));
   }
   const update: Record<string, unknown> = {};
   if (entries.length > 0) update.emails = FieldValue.arrayUnion(...entries.map((e) => clean(e)));
@@ -190,7 +163,7 @@ export const resendOrderEmail = onCall({ invoker: 'public', cors: true }, async 
   const snap = await ref.get();
   if (!snap.exists) throw new HttpsError('not-found', 'Order not found.');
   const order = { id: snap.id, ...snap.data() } as Order;
-  const entry = await sendOrderEmail(order, type, await getSettings(), emailRef(order, type), email);
+  const entry = await queueOrderEmail(order, type, await getSettings(), emailRef(order, type), email);
   await ref.update({ emails: FieldValue.arrayUnion(clean(entry)) });
   return entry;
 });

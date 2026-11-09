@@ -798,7 +798,7 @@ function CatalogList() {
                   >
                     Delete Selected
                   </Button>
-                  <Button size="sm" variant="quiet" className="text-surface-2 hover:text-white" onClick={() => setSelectedIds(new Set())}>Deselect</Button>
+                  <Button size="sm" variant="quiet" className="text-white/80! hover:text-white! hover:bg-white/10!" onClick={() => setSelectedIds(new Set())}>Deselect</Button>
                 </>
               )}
 

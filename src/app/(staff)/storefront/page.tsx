@@ -58,11 +58,14 @@ export default function StorefrontPage() {
   });
 
   const hiddenFromMail = items.filter((i) => i.active && i.mailOrder === false).length;
+  const shopHref = typeof window !== 'undefined' && window.location.hostname === 'admin.tsuchinoco.xyz'
+    ? 'https://tsuchinoco.xyz/shop/'
+    : '/shop/';
 
   return (
     <>
       <PageHeader title="Storefront" actions={<>
-        <Button href="/shop/" target="_blank" rel="noopener noreferrer">Open the shop</Button>
+        <Button href={shopHref} target="_blank" rel="noopener noreferrer">Open the shop</Button>
         <Button variant="primary" busy={busy === 'publish'} onClick={publish}>{storeCatalog ? 'Publish changes' : 'Publish storefront'}</Button>
       </>}>
         One shop page for preorders and mail orders. Prices are always live; publish after changing items, offerings, batch dates or the text below.

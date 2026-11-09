@@ -56,7 +56,8 @@ function OrdersPage() {
   const payment = get('payment');
   const source = get('source');
   const quick = get('quick');
-  const [search, setSearch] = useState('');
+  // ?q= pre-fills the search (the Inbox links here with the customer's address).
+  const [search, setSearch] = useState(() => get('q'));
   const [openOrder, setOpenOrder] = useState<Order | null>(null);
   const [manual, setManual] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());

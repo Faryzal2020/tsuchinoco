@@ -29,5 +29,17 @@ service firebase.storage {
         && (request.resource.contentType.matches('image/.*') || request.resource.contentType == 'application/pdf');
       allow read, delete: if isStaff();
     }
+
+    // 3. Mail: copies of received attachments and large message bodies, written by the mail functions.
+    // Staff read them; nobody writes there from the browser.
+    match /mail/{allPaths=**} {
+      allow read: if isStaff();
+    }
+    // Files staff attach to an outgoing e-mail, uploaded before it is queued. Up to 20 MB each;
+    // the queue checks the total. Staff may remove a file they took off a draft.
+    match /mail/out/{uploadId}/{fileName} {
+      allow create: if isStaff() && request.resource.size < 20 * 1024 * 1024;
+      allow delete: if isStaff();
+    }
   }
 }

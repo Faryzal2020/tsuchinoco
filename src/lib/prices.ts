@@ -4,6 +4,7 @@
 // list. Customer pages read the list live, so a price change shows within seconds without a republish.
 // Orders keep the price entry and unit price they were made with, so they never change afterwards.
 import { collection, deleteField, doc, FieldPath, getDoc, getDocs, query, setDoc, where, writeBatch, type WriteBatch } from 'firebase/firestore';
+import { meterRead } from './readMeter';
 import { db } from './firebase';
 import { COL, clean, logActivity } from './repo';
 import { newId } from './keys';
@@ -41,6 +42,7 @@ export async function syncPriceList(by: string, itemIds?: string[], note?: strin
     goneIds = snaps.filter((s) => !s.exists()).map((s) => s.id);
   } else {
     const all = await getDocs(collection(db, COL.items));
+    meterRead('priceSync:items', all.size);
     items = all.docs.map((d) => ({ id: d.id, ...d.data() }) as Item);
   }
 
@@ -102,5 +104,6 @@ export async function syncPriceBasis(settings: Pick<Settings, 'storefront'>): Pr
 /** Price history of one item, newest first. */
 export async function priceHistoryOf(itemId: string): Promise<PriceEntry[]> {
   const snap = await getDocs(query(collection(db, COL.priceHistory), where('itemId', '==', itemId)));
+  meterRead('priceHistory', snap.size);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as PriceEntry).sort((a, b) => b.effectiveFrom - a.effectiveFrom);
 }

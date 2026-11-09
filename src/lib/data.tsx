@@ -8,6 +8,7 @@ import { collection, doc, onSnapshot, query, where, type DocumentData, type Quer
 import { db } from './firebase';
 import { COL } from './repo';
 import { useAuth } from './auth';
+import { metered, meteredDoc } from './readMeter';
 import type { Batch, Event, FormDoc, FormTemplate, Item, Order, PublicForm, PublicPrices, Settings, StoreCatalog, StoreStatus, Staff, StockMovement, Submission, ThemePresetDoc, Wrapup } from '@/types';
 import { DEFAULT_SETTINGS, OPEN_ORDER_STATUSES } from '@/types';
 
@@ -81,22 +82,22 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     const bump = () => setLoadedCount((n) => n + 1);
     const log = (name: string) => (e: Error) => console.error(`[data] ${name}`, e);
     const unsubs = [
-      onSnapshot(collection(db, COL.staff), (s) => { setStaff(rowsOf<Staff>(s)); bump(); }, log('staff')),
-      onSnapshot(collection(db, COL.items), (s) => { setItems(rowsOf<Item>(s)); bump(); }, log('items')),
-      onSnapshot(collection(db, COL.events), (s) => { setEvents(rowsOf<Event>(s)); bump(); }, log('events')),
-      onSnapshot(collection(db, COL.batches), (s) => { setBatches(rowsOf<Batch>(s)); bump(); }, log('batches')),
-      onSnapshot(query(collection(db, COL.orders), where('status', 'in', OPEN_ORDER_STATUSES)), (s) => { setOpenOrders(rowsOf<Order>(s)); bump(); }, log('openOrders')),
-      onSnapshot(collection(db, COL.movements), (s) => { setMovements(rowsOf<StockMovement>(s)); bump(); }, log('movements')),
-      onSnapshot(collection(db, COL.wrapups), (s) => { setWrapups(rowsOf<Wrapup>(s)); bump(); }, log('wrapups')),
-      onSnapshot(collection(db, COL.forms), (s) => { setForms(rowsOf<FormDoc>(s)); bump(); }, log('forms')),
-      onSnapshot(collection(db, COL.publicForms), (s) => { setPublicForms(rowsOf<PublicForm>(s)); bump(); }, log('publicForms')),
-      onSnapshot(query(collection(db, COL.submissions), where('status', 'in', ['new', 'rejected'])), (s) => { setSubmissions(rowsOf<Submission>(s)); bump(); }, log('submissions')),
-      onSnapshot(collection(db, COL.templates), (s) => { setTemplates(rowsOf<FormTemplate>(s)); bump(); }, log('templates')),
-      onSnapshot(collection(db, COL.themePresets), (s) => { setThemePresets(rowsOf<ThemePresetDoc>(s)); bump(); }, log('themePresets')),
-      onSnapshot(doc(db, COL.publicPrices, 'current'), (s) => { setPublicPrices(s.exists() ? (s.data() as PublicPrices) : null); bump(); }, log('publicPrices')),
-      onSnapshot(doc(db, COL.publicStore, 'catalog'), (s) => { setStoreCatalog(s.exists() ? (s.data() as StoreCatalog) : null); bump(); }, log('storeCatalog')),
-      onSnapshot(doc(db, COL.publicStore, 'status'), (s) => { setStoreStatus(s.exists() ? (s.data() as StoreStatus) : null); bump(); }, log('storeStatus')),
-      onSnapshot(doc(db, COL.settings, 'global'), (s) => { setSettings(s.exists() ? { ...DEFAULT_SETTINGS, ...(s.data() as Partial<Settings>) } : DEFAULT_SETTINGS); bump(); }, log('settings')),
+      onSnapshot(collection(db, COL.staff), metered('staff', (s) => { setStaff(rowsOf<Staff>(s)); bump(); }), log('staff')),
+      onSnapshot(collection(db, COL.items), metered('items', (s) => { setItems(rowsOf<Item>(s)); bump(); }), log('items')),
+      onSnapshot(collection(db, COL.events), metered('events', (s) => { setEvents(rowsOf<Event>(s)); bump(); }), log('events')),
+      onSnapshot(collection(db, COL.batches), metered('batches', (s) => { setBatches(rowsOf<Batch>(s)); bump(); }), log('batches')),
+      onSnapshot(query(collection(db, COL.orders), where('status', 'in', OPEN_ORDER_STATUSES)), metered('openOrders', (s) => { setOpenOrders(rowsOf<Order>(s)); bump(); }), log('openOrders')),
+      onSnapshot(collection(db, COL.movements), metered('movements', (s) => { setMovements(rowsOf<StockMovement>(s)); bump(); }), log('movements')),
+      onSnapshot(collection(db, COL.wrapups), metered('wrapups', (s) => { setWrapups(rowsOf<Wrapup>(s)); bump(); }), log('wrapups')),
+      onSnapshot(collection(db, COL.forms), metered('forms', (s) => { setForms(rowsOf<FormDoc>(s)); bump(); }), log('forms')),
+      onSnapshot(collection(db, COL.publicForms), metered('publicForms', (s) => { setPublicForms(rowsOf<PublicForm>(s)); bump(); }), log('publicForms')),
+      onSnapshot(query(collection(db, COL.submissions), where('status', 'in', ['new', 'rejected'])), metered('submissions', (s) => { setSubmissions(rowsOf<Submission>(s)); bump(); }), log('submissions')),
+      onSnapshot(collection(db, COL.templates), metered('templates', (s) => { setTemplates(rowsOf<FormTemplate>(s)); bump(); }), log('templates')),
+      onSnapshot(collection(db, COL.themePresets), metered('themePresets', (s) => { setThemePresets(rowsOf<ThemePresetDoc>(s)); bump(); }), log('themePresets')),
+      onSnapshot(doc(db, COL.publicPrices, 'current'), meteredDoc('publicPrices', (s) => { setPublicPrices(s.exists() ? (s.data() as PublicPrices) : null); bump(); }), log('publicPrices')),
+      onSnapshot(doc(db, COL.publicStore, 'catalog'), meteredDoc('storeCatalog', (s) => { setStoreCatalog(s.exists() ? (s.data() as StoreCatalog) : null); bump(); }), log('storeCatalog')),
+      onSnapshot(doc(db, COL.publicStore, 'status'), meteredDoc('storeStatus', (s) => { setStoreStatus(s.exists() ? (s.data() as StoreStatus) : null); bump(); }), log('storeStatus')),
+      onSnapshot(doc(db, COL.settings, 'global'), meteredDoc('settings', (s) => { setSettings(s.exists() ? { ...DEFAULT_SETTINGS, ...(s.data() as Partial<Settings>) } : DEFAULT_SETTINGS); bump(); }), log('settings')),
     ];
     return () => { unsubs.forEach((u) => u()); setLoadedCount(0); };
   }, [ready]);
@@ -150,7 +151,7 @@ export function useEventOrders(eventId: string | undefined): { orders: Order[]; 
     setLoaded(false);
     return onSnapshot(
       query(collection(db, COL.orders), where('eventId', '==', eventId)),
-      (s) => { setOrders(rowsOf<Order>(s).sort((a, b) => b.submittedAt - a.submittedAt)); setLoaded(true); },
+      metered('eventOrders', (s) => { setOrders(rowsOf<Order>(s).sort((a, b) => b.submittedAt - a.submittedAt)); setLoaded(true); }),
       (e) => { console.error('[data] eventOrders', e); setLoaded(true); },
     );
   }, [eventId, override]);
@@ -171,7 +172,7 @@ export function useOrdersForEvents(eventIds: string[]): { orders: Order[]; loade
     setLoaded(false);
     return onSnapshot(
       query(collection(db, COL.orders), where('eventId', 'in', ids)),
-      (s) => { setOrders(rowsOf<Order>(s).sort((a, b) => b.submittedAt - a.submittedAt)); setLoaded(true); },
+      metered('ordersForEvents', (s) => { setOrders(rowsOf<Order>(s).sort((a, b) => b.submittedAt - a.submittedAt)); setLoaded(true); }),
       (e) => { console.error('[data] ordersForEvents', e); setLoaded(true); },
     );
   }, [key, override]);

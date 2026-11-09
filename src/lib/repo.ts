@@ -47,6 +47,10 @@ export const COL = {
   priceHistory: 'priceHistory',
   publicPrices: 'publicPrices',
   publicStore: 'publicStore',
+  mailThreads: 'mailThreads',
+  mailMessages: 'mailMessages',
+  mailQuota: 'mailQuota',
+  contactSubmissions: 'contactSubmissions',
 } as const;
 
 type Meta = { createdAt: number; updatedAt: number; updatedBy: string };
