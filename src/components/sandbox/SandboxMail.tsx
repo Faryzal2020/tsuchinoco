@@ -159,7 +159,7 @@ export function SandboxMailProvider({ children }: { children: React.ReactNode })
     removeUpload: async () => undefined,
     threads: [...s.threads].sort((a, b) => b.lastAt - a.lastAt),
     outgoing: s.messages.filter((m) => m.direction === 'out').sort((a, b) => b.at - a.at),
-    hasMore: { threads: false, outgoing: false },
+    hasMore: { threads: false, outgoing: false, waiting: false },
     loadMore: () => undefined,
     quotaDay: s.quotaDay,
     quotaMonth: s.quotaMonth,

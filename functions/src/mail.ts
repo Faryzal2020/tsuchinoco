@@ -291,7 +291,18 @@ async function sendQueued(ids: string[]): Promise<number> {
   return claimed.length;
 }
 
-/** Send whatever is queued, highest priority and oldest first, until the budget or the time runs out. */
+/** How many e-mails may still go out now: two reads, against one per queued message. */
+async function budgetNow(m: MailSettings): Promise<number> {
+  const now = Date.now();
+  const [day, month] = await db().getAll(...quotaRefs(now));
+  return budgetLeft(day.data() as MailQuota | undefined, month.data() as MailQuota | undefined, m, now);
+}
+
+/**
+ * Send whatever is queued, highest priority and oldest first, until the budget or the time runs out.
+ * Firestore bills every queued message a query returns, so a backlog waiting for tomorrow's (or next
+ * month's) quota must not be read every 15 minutes: check the budget first and read only that many.
+ */
 async function drain(deadline: number): Promise<number> {
   const settings = await getSettings();
   const resend = resendFor(settings);
@@ -299,7 +310,9 @@ async function drain(deadline: number): Promise<number> {
   const m = mailSettingsOf(settings);
   let total = 0;
   while (Date.now() < deadline) {
-    const q = await db().collection(MSG).where('status', '==', 'queued').orderBy('priority').orderBy('queuedAt').limit(100).get();
+    const budget = Math.min(100, await budgetNow(m));
+    if (budget <= 0) break;
+    const q = await db().collection(MSG).where('status', '==', 'queued').orderBy('priority').orderBy('queuedAt').limit(budget).get();
     if (q.empty) break;
     const claimed = await claim(q.docs.map((d) => d.id), m);
     if (claimed.length === 0) break;
@@ -336,6 +349,8 @@ export const drainMailQueue = onSchedule({ schedule: 'every 15 minutes', timeZon
   // A send that crashed half-way goes back in the queue; the idempotency key stops a double send.
   const stuck = await db().collection(MSG).where('status', '==', 'sending').where('claimedAt', '<', Date.now() - STUCK_MS).limit(200).get();
   if (!stuck.empty) {
+    // Should be rare: each one is a send that died half-way. Seen every run, something keeps failing.
+    logger.warn(`[mail] ${stuck.size} message(s) stuck in sending; queued again`);
     const b = db().batch();
     stuck.docs.forEach((d) => b.update(d.ref, { status: 'queued', claimedAt: FieldValue.delete() }));
     await b.commit();

@@ -140,10 +140,11 @@ export default function Inbox({ inbox }: { inbox: string }) {
         <div className="flex flex-wrap gap-1 lg:flex-col">
           {VIEWS.map((v) => {
             const n = counts[v.id as keyof typeof counts] ?? 0;
+            const plus = v.id === 'outbox' && mail.hasMore.waiting ? '+' : '';
             return (
               <button key={v.id} type="button" className="nav-link justify-between lg:w-full" aria-current={view === v.id ? 'page' : undefined} onClick={() => open({ folder: v.id === 'inbox' ? null : v.id, thread: null, message: null })}>
                 <span>{v.label}</span>
-                {n > 0 && <span className={cn('ml-2 text-xs font-bold', v.id === 'failed' ? 'text-red-ink' : 'text-ink-2')}>{n}</span>}
+                {n > 0 && <span className={cn('ml-2 text-xs font-bold', v.id === 'failed' ? 'text-red-ink' : 'text-ink-2')}>{n}{plus}</span>}
               </button>
             );
           })}
@@ -151,7 +152,7 @@ export default function Inbox({ inbox }: { inbox: string }) {
         <div className="panel px-3 py-2.5 text-sm space-y-0.5" title="Received mail counts too. Waiting mail goes out after the daily reset at 07:00 WIB.">
           <div className="eyebrow">Sending today</div>
           <div><b>{usedToday}</b> of {m.dailyLimit} used</div>
-          <div className="hint">{budget} left · {counts.outbox} waiting</div>
+          <div className="hint">{budget} left · {counts.outbox}{mail.hasMore.waiting ? '+' : ''} waiting</div>
           <div className="hint">Month: {(mail.quotaMonth?.sent ?? 0) + (mail.quotaMonth?.received ?? 0)} of {m.monthlyLimit}</div>
           {blockedUntil > Date.now() && <div className="text-red-ink text-xs">Resend paused sending until {formatDateTime(blockedUntil)}.</div>}
           <div className="hint text-xs pt-1">Resets 07:00 WIB.</div>

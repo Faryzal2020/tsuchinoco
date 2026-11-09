@@ -30,10 +30,10 @@ export interface MailApi {
   removeUpload: (path: string) => Promise<void>;
   /** Newest first, across all folders and inboxes; the latest PAGE, more after loadMore('threads'). */
   threads: MailThread[];
-  /** Outgoing messages, newest first: everything waiting to send plus the latest PAGE of the rest. */
+  /** Outgoing messages, newest first: the next WAITING_MAX waiting to send plus the latest PAGE of the rest. */
   outgoing: MailMessage[];
-  /** Whether older threads or sent messages exist beyond what is loaded. */
-  hasMore: { threads: boolean; outgoing: boolean };
+  /** Whether older threads or sent messages, or more waiting ones, exist beyond what is loaded. */
+  hasMore: { threads: boolean; outgoing: boolean; waiting: boolean };
   /** Load another page of older threads or sent messages. */
   loadMore: (what: 'threads' | 'outgoing') => void;
   quotaDay?: MailQuota;
@@ -53,6 +53,8 @@ export interface MailApi {
 
 /** Threads and sent messages load in pages of this size; each page is a full re-read, so keep it small. */
 export const MAIL_PAGE = 50;
+/** At most this many waiting messages are listed; the Outbox count shows "100+" beyond it. */
+export const WAITING_MAX = 100;
 
 const Ctx = createContext<MailApi | null>(null);
 
@@ -128,9 +130,9 @@ export function FirestoreMailProvider({ me, children }: { me: string; children: 
     metered('mail:sent', (s) => setRecentOut(rows<MailMessage>(s))),
     (e) => { log('outgoing')(e); setRecentOut([]); },
   ), [outLimit]);
-  // Everything still waiting, however old, so the Outbox and its count stay complete.
+  // The next messages to go out, however old. A backlog can run to thousands, so only the first few.
   useEffect(() => onSnapshot(
-    query(collection(db, COL.mailMessages), where('status', 'in', ['queued', 'sending'])),
+    query(collection(db, COL.mailMessages), where('status', 'in', ['queued', 'sending']), orderBy('priority'), orderBy('queuedAt'), limit(WAITING_MAX)),
     metered('mail:waiting', (s) => setPendingOut(rows<MailMessage>(s).filter((x) => x.direction === 'out'))),
     (e) => { log('waiting')(e); setPendingOut([]); },
   ), []);
@@ -170,7 +172,7 @@ export function FirestoreMailProvider({ me, children }: { me: string; children: 
     removeUpload: async (path) => { await deleteObject(ref(storage, path)).catch(() => undefined); },
     threads: threads ?? [],
     outgoing: outgoing ?? [],
-    hasMore: { threads: (threads?.length ?? 0) >= threadLimit, outgoing: (recentOut?.length ?? 0) >= outLimit },
+    hasMore: { threads: (threads?.length ?? 0) >= threadLimit, outgoing: (recentOut?.length ?? 0) >= outLimit, waiting: (pendingOut?.length ?? 0) >= WAITING_MAX },
     loadMore: (what) => (what === 'threads' ? setThreadLimit : setOutLimit)((n) => n + MAIL_PAGE),
     quotaDay,
     quotaMonth,
@@ -195,7 +197,7 @@ export function FirestoreMailProvider({ me, children }: { me: string; children: 
     },
     send: (args) => fx.queueMail(args),
     fileUrl: (path) => getDownloadURL(ref(storage, path)),
-  }), [threads, outgoing, recentOut, threadLimit, outLimit, quotaDay, quotaMonth, me, inboxes, inboxNames]);
+  }), [threads, outgoing, recentOut, pendingOut, threadLimit, outLimit, quotaDay, quotaMonth, me, inboxes, inboxNames]);
 
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
 }
