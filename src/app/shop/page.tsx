@@ -48,7 +48,7 @@ export default function ShopPage() {
   if (catalog === undefined) return <div className="shop" />;
   if (catalog === null) {
     return (
-      <div className="shop"><div className="shop-banner shop-banner-quiet"><b>The shop is not open yet</b><span>Check back soon.</span></div></div>
+      <div className="shop"><div className="shop-status shop-status-quiet"><b>The shop is not open yet</b><span>Check back soon.</span></div></div>
     );
   }
 

@@ -680,6 +680,48 @@ export interface Courier {
   trackingUrl?: string;
 }
 
+/** What one level of the storefront order sorts by. `series` is the item category. */
+export type StoreSortKey = 'series' | 'type' | 'manager' | 'artist' | 'name' | 'price' | 'added';
+export interface StoreSortRule { key: StoreSortKey; dir: 'asc' | 'desc' }
+
+export type StoreSize = 'sm' | 'md' | 'lg' | 'xl';
+export type StoreButtonStyle = 'tactile' | 'flat' | 'outline' | 'pill';
+export type StoreRadius = 'sharp' | 'soft' | 'round';
+
+/** Colours, type sizes and shapes of the public shop. Every field has a default in DEFAULT_STORE_THEME. */
+export interface StoreTheme {
+  background: string;
+  /** media id of a wallpaper shown behind the page; the publish resolves it to a URL. */
+  wallpaperId?: string;
+  wallpaperMode: 'cover' | 'tile';
+  surface: string;
+  text: string;
+  border: string;
+  borderWidth: 0 | 1 | 2 | 3;
+  radius: StoreRadius;
+  /** Links, focus rings, savings. */
+  accent: string;
+  /** Add-to-cart and the checkout button. */
+  button: string;
+  buttonText: string;
+  buttonStyle: StoreButtonStyle;
+  /** Highlighted-section underline and the active filter chips. */
+  highlight: string;
+  font: FormFont;
+  titleSize: StoreSize;
+  priceSize: StoreSize;
+  /** The type · series · artist line under each title. */
+  descSize: 'sm' | 'md' | 'lg';
+  priceColor?: string;
+}
+
+/** Staff-placed content between the shop's parts: an image banner or a separator. */
+export type StoreBlock =
+  | { id: string; type: 'banner'; imageId: string; href?: string; alt?: string; position: StoreBlockPosition }
+  | { id: string; type: 'separator'; title?: string; style: 'line' | 'space'; position: StoreBlockPosition };
+/** Where a block sits: under the header, between the highlights and the main list, or after everything. */
+export type StoreBlockPosition = 'top' | 'middle' | 'bottom';
+
 export interface StorefrontSettings {
   priceBasis: Record<OrderType, 'po' | 'ots'>;
   graceMinutes: number;
@@ -691,7 +733,23 @@ export interface StorefrontSettings {
   paymentText?: string;
   /** Payment choices offered at checkout. */
   paymentChoices?: string[];
+  /** Item ids shown in their own section at the top of the storefront. */
+  highlights?: string[];
+  /** Order of the main list, first level first. Absent means DEFAULT_STORE_SORT. */
+  sort?: StoreSortRule[];
+  /** Put a heading in the main list wherever the first sort level changes. */
+  groupHeadings?: boolean;
+  theme?: Partial<StoreTheme>;
+  blocks?: StoreBlock[];
 }
+
+export const DEFAULT_STORE_SORT: StoreSortRule[] = [{ key: 'manager', dir: 'asc' }, { key: 'series', dir: 'asc' }, { key: 'name', dir: 'asc' }];
+
+export const DEFAULT_STORE_THEME: StoreTheme = {
+  background: '#FBF8EE', wallpaperMode: 'cover', surface: '#FFFFFF', text: '#26241F', border: '#E4DECB', borderWidth: 1, radius: 'soft',
+  accent: '#2A5BD7', button: '#F3C23C', buttonText: '#26241F', buttonStyle: 'tactile', highlight: '#F3C23C',
+  font: 'sans', titleSize: 'md', priceSize: 'md', descSize: 'md',
+};
 
 export const DEFAULT_STOREFRONT: StorefrontSettings = {
   priceBasis: { preorder: 'po', mail_order: 'ots' },
@@ -743,6 +801,11 @@ export interface StoreLaneInfo {
   closesAt: string;
 }
 
+/** A StoreBlock as the shop reads it: the image is a URL, not a media id. */
+export type PublishedStoreBlock =
+  | { id: string; type: 'banner'; src: string; href?: string; alt?: string; position: StoreBlockPosition }
+  | { id: string; type: 'separator'; title?: string; style: 'line' | 'space'; position: StoreBlockPosition };
+
 /** publicStore/catalog: everything the storefront shows. Public read, written by staff on publish. */
 export interface StoreCatalog {
   title: string;
@@ -752,9 +815,14 @@ export interface StoreCatalog {
   lanes: StoreLaneInfo[];
   /** Event days, from the start of the first day to the end of the last: mail order pauses. */
   eventDays: { name: string; code: string; from: number; until: number }[];
-  /** Staff-chosen sections and highlights come later; empty means group by item type. */
+  /** Headings in the main list, from the first sort level, when staff turned them on. keys are item ids. */
   sections: { title: string; keys: string[] }[];
+  /** Item ids shown in a "Highlighted" section above the rest, and left out of the main list. */
   highlights: string[];
+  /** Colours and shapes, with the wallpaper resolved to a URL. Absent on catalogues published before themes. */
+  theme?: StoreTheme & { wallpaper?: string };
+  /** Banners and separators with their images resolved to URLs. */
+  blocks?: PublishedStoreBlock[];
   paymentText: string;
   paymentChoices: string[];
   requirePhone: boolean;

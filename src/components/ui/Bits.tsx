@@ -74,6 +74,31 @@ export function StatusPill({ status }: { status: string }) {
   return <Pill tone={STATUS_TONES[status] ?? 'neutral'}>{statusLabel(status)}</Pill>;
 }
 
+/**
+ * A small "?" that explains an element on hover or focus. Keeps the page itself short: the label
+ * says what a control is, the tip says why or when. Text only, no icon font.
+ */
+export function Help({ text, label = 'More about this', className }: { text: React.ReactNode; label?: string; className?: string }) {
+  const id = React.useId();
+  return (
+    <span className={cn('tip', className)}>
+      <button type="button" className="tip-btn" aria-label={label} aria-describedby={id}>?</button>
+      <span role="tooltip" id={id} className="tip-box">{text}</span>
+    </span>
+  );
+}
+
+/** A heading with an optional Help beside it, for panel and group titles. */
+export function Heading({ children, tip, level = 2, className }: { children: React.ReactNode; tip?: React.ReactNode; level?: 2 | 3; className?: string }) {
+  const Tag = level === 3 ? 'h3' : 'h2';
+  return (
+    <Tag className={cn('flex items-center gap-1.5', level === 3 ? 'text-sm font-bold' : 'font-bold', className)}>
+      {children}
+      {tip && <Help text={tip} />}
+    </Tag>
+  );
+}
+
 export function Panel({ children, className, pad = true }: { children: React.ReactNode; className?: string; pad?: boolean }) {
   return <div className={cn('panel', pad && 'panel-pad', className)}>{children}</div>;
 }

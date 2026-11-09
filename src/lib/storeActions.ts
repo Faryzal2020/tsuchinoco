@@ -6,8 +6,9 @@ import { doc, getDoc, writeBatch } from 'firebase/firestore';
 import { db } from './firebase';
 import { COL, clean, eventRepo, logActivity } from './repo';
 import { fetchManyMedia } from './media';
+import { storefrontOf } from './pricing';
 import { buildStorefront, endOfToday, laneIdFor, MAIL_LANE_ID, mediaIdsForProducts, overrideActive, STORE_EVENT_CODE, storeHashFor } from './store';
-import type { Batch, Event, FormDoc, Item, Settings, StoreCatalog, StoreStatus } from '@/types';
+import type { Batch, Event, FormDoc, Item, Settings, Staff, StoreCatalog, StoreStatus } from '@/types';
 
 export const STORE_CATALOG_ID = 'catalog';
 export const STORE_STATUS_ID = 'status';
@@ -25,6 +26,8 @@ export interface PublishInput {
   settings: Settings;
   current: StoreCatalog | null;
   status: StoreStatus | null;
+  /** Orders the catalogue by manager name. */
+  staff?: Staff[];
   by: string;
 }
 
@@ -43,7 +46,7 @@ export const storeRepo = {
 
   publish: async (input: PublishInput): Promise<{ lanes: number; products: number }> => {
     const storeEvent = await storeRepo.ensureStoreEvent(input.events, input.settings, input.by);
-    const media = await fetchManyMedia(mediaIdsForProducts(input.items));
+    const media = await fetchManyMedia(mediaIdsForProducts(input.items, storefrontOf(input.settings)));
     const build = buildStorefront({ ...input, media, storeEvent });
     const version = (input.current?.version ?? 0) + 1;
     const catalog: StoreCatalog = { ...build.catalog, publishedHash: storeHashFor({ ...input, storeEvent }), version, publishedAt: Date.now() };

@@ -239,6 +239,30 @@ h1, h2, h3 { text-wrap: balance; letter-spacing: -0.01em; }
 .pill-green { background: var(--green-soft); color: var(--green-ink); }
 .pill-red { background: var(--red-soft); color: var(--red-ink); }
 
+/* Small on/off chip (e.g. variants in the offering picker). Tactile like .btn, blue when on. */
+.chip-toggle {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1.5px solid var(--line-strong);
+  background: var(--white);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 2px 0 0 var(--line-strong);
+  transition: transform 80ms ease, box-shadow 80ms ease, background 120ms ease;
+  cursor: pointer;
+  user-select: none;
+}
+.chip-toggle:hover { background: var(--cream); }
+.chip-toggle:active { transform: translateY(1px); box-shadow: 0 1px 0 0 var(--line-strong); }
+.chip-toggle[aria-pressed="true"] { background: var(--blue-soft); border-color: var(--blue); color: var(--blue-ink); box-shadow: 0 2px 0 0 var(--blue-2); }
+.chip-toggle:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.chip-toggle:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
 /* ---------- Tabs ---------- */
 .tabs { display: flex; gap: 4px; border-bottom: 1.5px solid var(--line-strong); overflow-x: auto; }
 .tab {
@@ -265,6 +289,25 @@ h1, h2, h3 { text-wrap: balance; letter-spacing: -0.01em; }
 }
 .nav-link:hover { background: var(--cream-2); color: var(--ink); }
 .nav-link[aria-current="page"] { background: var(--yellow-soft); color: var(--yellow-ink); }
+
+/* ---------- Tooltips ----------
+   .tip wraps a "?" button and a bubble that shows on hover or keyboard focus. The bubble is anchored
+   below the button and shifts left when it would leave the viewport on the right (see .tip-box.flip). */
+.tip { position: relative; display: inline-flex; vertical-align: middle; }
+.tip-btn {
+  width: 18px; height: 18px; border-radius: 999px; border: 1.5px solid var(--line-strong); background: var(--white);
+  color: var(--ink-2); font-size: 11px; font-weight: 700; line-height: 1; cursor: help; padding: 0; display: inline-flex; align-items: center; justify-content: center;
+}
+.tip-btn:hover, .tip-btn:focus-visible { border-color: var(--blue); color: var(--blue-ink); outline: none; }
+.tip-box {
+  position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 50; width: max-content; max-width: min(300px, 80vw);
+  background: var(--ink); color: #fff; font-size: 12.5px; font-weight: 500; line-height: 1.45; text-transform: none; letter-spacing: 0; text-align: left;
+  padding: 8px 10px; border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,0.18); pointer-events: none; opacity: 0; visibility: hidden; transition: opacity 100ms ease;
+}
+.tip-box::before { content: ''; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); border: 6px solid transparent; border-bottom-color: var(--ink); }
+.tip:hover .tip-box, .tip:focus-within .tip-box { opacity: 1; visibility: visible; }
+.tip.tip-left .tip-box { left: auto; right: 0; transform: none; }
+.tip.tip-left .tip-box::before { left: auto; right: 4px; transform: none; }
 
 /* ---------- Misc ---------- */
 .label { display: block; font-size: 12.5px; font-weight: 700; color: var(--ink-2); margin-bottom: 5px; }

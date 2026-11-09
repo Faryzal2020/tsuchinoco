@@ -1,12 +1,14 @@
 // Sample data for the localhost sandbox. Dates are relative to today so the storefront is always
 // in an interesting state: a preorder open for an event three weeks out, mail order switched on
 // (and therefore paused), a wrapped event with post-event mail orders on hold.
-import type { Batch, Event, Item, LivePrice, Order, PublicPrices, Settings, Staff, StoreStatus } from '@/types';
+import type { Batch, Event, Item, LivePrice, Media, Order, PublicPrices, Settings, Staff, StoreStatus } from '@/types';
 import { DEFAULT_SETTINGS } from '@/types';
 import { catalogPrice, keysOf, storefrontOf } from '@/lib/pricing';
 import { monthBatchFor } from '@/lib/store';
 
 export const SANDBOX_ME = 'sandbox@localhost';
+/** A second product manager, so the storefront's manager-first order has something to sort. */
+const AYU = 'ayu@localhost';
 const DAY = 86_400_000;
 const iso = (offsetDays: number) => { const d = new Date(Date.now() + offsetDays * DAY); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const meta = { createdAt: Date.now() - 30 * DAY, updatedAt: Date.now() - DAY, updatedBy: SANDBOX_ME };
@@ -21,7 +23,15 @@ export interface SandboxState {
   publicPrices: PublicPrices;
   storeStatus: StoreStatus;
   counters: Record<string, number>;
+  /** Sample images, so banners and thumbnails render without Cloud Storage. */
+  media: Media[];
 }
+
+/** A flat SVG banner as a data URL; real banners are uploaded JPEGs. */
+const svgBanner = (text: string, bg: string, ink: string): string => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="260" viewBox="0 0 1200 260"><rect width="1200" height="260" fill="${bg}"/><circle cx="1060" cy="130" r="170" fill="${ink}" fill-opacity=".08"/><text x="60" y="150" font-family="system-ui, sans-serif" font-size="56" font-weight="700" fill="${ink}">${text}</text></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+};
 
 const product = (id: string, name: string, type: string, price: number, ots: number, opts: Partial<Item> = {}): Item => ({
   id, name, kind: 'product', type, managerId: SANDBOX_ME, price, otsPrice: ots, producedAt: '', active: true, variants: [], components: [], notes: '', ...meta, ...opts,
@@ -30,13 +40,17 @@ const v = (id: string, name: string, extra = {}) => ({ id, name, active: true, .
 
 export function makeSandbox(): SandboxState {
   const items: Item[] = [
-    product('standee', 'Kitsune Shrine Acrylic Standee', 'acrylic standee', 70000, 85000, { category: 'Kitsune Shrine', artist: 'Rina', variants: [v('15', '15 cm'), v('20', '20 cm', { price: 90000, otsPrice: 110000 })] }),
+    product('standee', 'Kitsune Shrine Acrylic Standee', 'acrylic standee', 70000, 85000, { category: 'Kitsune Shrine', artist: 'Rina', thumbnailId: 'm-standee', variants: [v('15', '15 cm'), v('20', '20 cm', { price: 90000, otsPrice: 110000 })] }),
     product('sticker', 'Night Market Sticker Sheet', 'sticker', 30000, 35000, { category: 'Night Market', artist: 'Tomo', discountPercent: 20, variants: [v('gloss', 'Glossy'), v('holo', 'Holo', { price: 35000, otsPrice: 40000 })] }),
     product('keychain', 'Lantern Keychain', 'acrylic keychain', 35000, 40000, { category: 'Night Market', artist: 'Tomo', variants: [v('red', 'Red'), v('blue', 'Blue'), v('gold', 'Gold')] }),
     product('guide', 'Tsuchinoco Field Guide Vol. 2', 'book comic', 120000, 120000, { artist: 'Rina', variants: [v('id', 'Bahasa Indonesia'), v('en', 'English')] }),
     product('poster', 'Shrine at Dusk Poster', 'poster a3', 45000, 50000, { category: 'Kitsune Shrine', artist: 'Rina' }),
     product('tee', 'Circle Logo T-Shirt', 't-shirt', 150000, 165000, { variants: [v('s', 'S'), v('m', 'M'), v('l', 'L'), v('xl', 'XL')] }),
     product('mug', 'Enamel Mug', 'other', 95000, 95000, { mailOrder: false }),
+    product('pin', 'Tsuchinoco Enamel Pin', 'pin', 40000, 45000, { managerId: AYU, category: 'Circle Goods', artist: 'Ayu' }),
+    product('totebag', 'Night Market Tote Bag with an Extra Long Name for Wrapping', 'tote bag', 110000, 125000, { managerId: AYU, category: 'Night Market', artist: 'Ayu' }),
+    product('postcard', 'Shrine Postcard Set', 'postcard', 25000, 30000, { managerId: AYU, category: 'Kitsune Shrine', artist: 'Ayu', variants: [v('a', 'Set A'), v('b', 'Set B')] }),
+    product('fan', 'Paper Fan', 'other', 20000, 25000, { managerId: AYU }),
     { id: 'starter', name: 'Starter Bundle', kind: 'bundle', type: 'bundle', managerId: SANDBOX_ME, price: 90000, otsPrice: 105000, producedAt: '', active: true, variants: [],
       components: [{ itemId: 'sticker', variantId: 'gloss', qty: 1 }, { itemId: 'keychain', variantId: 'red', qty: 1 }, { itemId: 'poster', variantId: 'default', qty: 1 }], notes: '', ...meta },
   ];
@@ -75,12 +89,21 @@ export function makeSandbox(): SandboxState {
     order({ id: 'o8', eventId: 'cf23', batchId: 'cf23b3', transactionId: 'CF23_3_0010', customer: c('Agus Hartono'), fulfilment: 'mail', status: 'cancelled', cancelledAt: Date.now() - 15 * DAY, orderType: 'mail_order', payment: 'unpaid', rawLines: [line('keychain', 'gold', 1, 40000)], submittedAt: Date.now() - 28 * DAY }),
   ];
 
+  const now = Date.now();
   // Live price list straight from the catalogue; the 20 cm standee changed an hour ago.
+  const media: Media[] = [
+    { id: 'm-standee', kind: 'thumbnail', mime: 'image/svg+xml', dataUrl: svgBanner('Standee', '#E8EEFC', '#2A5BD7'), width: 1200, height: 260, bytes: 700, name: 'standee.svg', createdAt: now - 2 * DAY, createdBy: SANDBOX_ME },
+    { id: 'm-banner', kind: 'image', mime: 'image/svg+xml', dataUrl: svgBanner('Comic Frontier 24 preorders are open', '#FDF3D3', '#26241F'), width: 1200, height: 260, bytes: 900, name: 'banner.svg', createdAt: now - 2 * DAY, createdBy: SANDBOX_ME },
+  ];
   const settings: Settings = {
-    ...DEFAULT_SETTINGS, storefront: storefrontOf({}), resendFromEmail: 'shop@example.com', resendFromName: 'Tsuchinoco',
+    ...DEFAULT_SETTINGS,
+    storefront: {
+      ...storefrontOf({}), highlights: ['standee', 'starter', 'postcard'],
+      blocks: [{ id: 'b1', type: 'banner', imageId: 'm-banner', alt: 'Comic Frontier 24 preorders are open', position: 'top' }],
+    },
+    resendFromEmail: 'shop@example.com', resendFromName: 'Tsuchinoco',
     notifications: { received: { on: true }, paid: { on: true }, delivered: { on: true } },
   };
-  const now = Date.now();
   const list: Record<string, LivePrice> = {};
   for (const it of items) for (const key of keysOf(it)) {
     const p = catalogPrice(it, key);
@@ -90,8 +113,8 @@ export function makeSandbox(): SandboxState {
   const publicPrices: PublicPrices = { basis: storefrontOf(settings).priceBasis, graceMinutes: 60, items: list, updatedAt: now };
 
   return {
-    staff: [{ id: SANDBOX_ME, email: SANDBOX_ME, displayName: 'Sandbox staff', active: true, ...meta }],
-    items, events, batches, orders, settings, publicPrices,
+    staff: [{ id: SANDBOX_ME, email: SANDBOX_ME, displayName: 'Sandbox staff', active: true, ...meta }, { id: AYU, email: AYU, displayName: 'Ayu', active: true, ...meta }],
+    items, events, batches, orders, settings, publicPrices, media,
     storeStatus: { mailOrderOpen: true, updatedAt: now },
     counters: { cf24b1: 5, cf23b3: 13, [month.id]: 2 },
   };

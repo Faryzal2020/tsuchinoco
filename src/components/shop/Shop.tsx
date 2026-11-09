@@ -1,11 +1,14 @@
 'use client';
+/* eslint-disable @next/next/no-img-element -- thumbnails and banners are data or Storage URLs, next/image cannot optimise them */
 
 // The customer storefront. Pure UI: data comes in as props and orders leave through onSubmit,
 // so /shop/ (Firestore) and the localhost sandbox (sample data) render the same component.
 // Typography keeps three levels apart: item titles bold, variants quiet chips, prices monospace.
-// No icons anywhere; every control says what it does in words.
+// No icons anywhere; every control says what it does in words. Colours, sizes and shapes come from
+// the catalogue's theme as CSS variables on the root, so staff restyle the shop without a deploy.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type { OrderType, PublicForm, PublicPrices, StoreCatalog, StoreProduct, StoreStatus, StoreVariant, Submission } from '@/types';
+import type { OrderType, PublicForm, PublicPrices, PublishedStoreBlock, StoreBlockPosition, StoreCatalog, StoreProduct, StoreStatus, StoreTheme, StoreVariant, Submission } from '@/types';
+import { DEFAULT_STORE_THEME } from '@/types';
 import { storePrice, storeState, type StoreChoice, type StorePrice } from '@/lib/store';
 import { confirmationCode } from '@/lib/forms';
 import { formatMoney, titleCase } from '@/lib/format';
@@ -27,6 +30,8 @@ export interface ShopProps {
   now?: number;
   /** Shown above the page, e.g. the sandbox notice. */
   notice?: React.ReactNode;
+  /** Staff preview inside the admin app: nothing is remembered in the browser and the page is not full height. */
+  preview?: boolean;
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -35,22 +40,54 @@ const LANE_KEY = 'tsu.shop.lane';
 const read = (k: string) => { try { return localStorage.getItem(k) ?? ''; } catch { return ''; } };
 const write = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } };
 
+const FONTS: Record<StoreTheme['font'], string> = {
+  sans: 'var(--font-jakarta), system-ui, -apple-system, "Segoe UI", sans-serif',
+  serif: 'Georgia, "Times New Roman", serif',
+  rounded: 'ui-rounded, "Hiragino Maru Gothic ProN", Quicksand, "Segoe UI", sans-serif',
+  mono: 'var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace',
+};
+const RADII: Record<StoreTheme['radius'], string> = { sharp: '2px', soft: '12px', round: '22px' };
+const TITLE_SIZES: Record<StoreTheme['titleSize'], string> = { sm: '14px', md: '16px', lg: '18px', xl: '21px' };
+const PRICE_SIZES: Record<StoreTheme['priceSize'], string> = { sm: '16px', md: '19px', lg: '22px', xl: '26px' };
+const DESC_SIZES: Record<StoreTheme['descSize'], string> = { sm: '11px', md: '12px', lg: '14px' };
+
+/** The theme as CSS variables for the .shop root. Older catalogues have no theme and get the defaults. */
+export function shopStyle(theme: StoreCatalog['theme']): React.CSSProperties {
+  const t = { ...DEFAULT_STORE_THEME, ...(theme ?? {}) };
+  const style: Record<string, string> = {
+    '--s-bg': t.background, '--s-surface': t.surface, '--s-ink': t.text, '--s-line': t.border,
+    '--s-blue': t.accent, '--s-yellow': t.highlight, '--s-btn': t.button, '--s-btn-ink': t.buttonText,
+    '--s-border-w': `${t.borderWidth}px`, '--s-radius': RADII[t.radius] ?? RADII.soft, '--s-sans': FONTS[t.font] ?? FONTS.sans,
+    '--s-title-size': TITLE_SIZES[t.titleSize] ?? TITLE_SIZES.md, '--s-price-size': PRICE_SIZES[t.priceSize] ?? PRICE_SIZES.md, '--s-desc-size': DESC_SIZES[t.descSize] ?? DESC_SIZES.md,
+    '--s-price-ink': t.priceColor || t.text,
+  };
+  if (t.wallpaper) {
+    style.backgroundImage = `url("${t.wallpaper}")`;
+    style.backgroundSize = t.wallpaperMode === 'tile' ? 'auto' : 'cover';
+    style.backgroundRepeat = t.wallpaperMode === 'tile' ? 'repeat' : 'no-repeat';
+    style.backgroundAttachment = 'fixed';
+    style.backgroundPosition = 'center top';
+  }
+  return style as React.CSSProperties;
+}
+
 interface Priced { variant: StoreVariant; product: StoreProduct; price: StorePrice; orderable: boolean }
 
-export default function Shop({ catalog, status, docs, prices, onSubmit, onContact, now, notice }: ShopProps) {
+export default function Shop({ catalog, status, docs, prices, onSubmit, onContact, now, notice, preview }: ShopProps) {
   const [clock, setClock] = useState(() => now ?? Date.now());
   useEffect(() => { if (now !== undefined) { setClock(now); return; } const t = setInterval(() => setClock(Date.now()), 60_000); return () => clearInterval(t); }, [now]);
   const state = useMemo(() => storeState(catalog, status, docs, clock), [catalog, status, docs, clock]);
+  const remember = (k: string, v: string) => { if (!preview) write(k, v); };
 
   // Which order type the customer picked; only a real choice when staff opened more than one.
   const [laneId, setLaneId] = useState('');
-  useEffect(() => { setLaneId(read(LANE_KEY)); }, []);
+  useEffect(() => { if (!preview) setLaneId(read(LANE_KEY)); }, [preview]);
   const choice = state.choices.find((c) => c.lane.id === laneId) ?? (state.choices.length === 1 ? state.choices[0] : undefined);
-  const pickLane = (id: string) => { setLaneId(id); write(LANE_KEY, id); };
+  const pickLane = (id: string) => { setLaneId(id); remember(LANE_KEY, id); };
 
   const [cart, setCart] = useState<Record<string, number>>({});
-  useEffect(() => { try { const c = JSON.parse(read(CART_KEY) || '{}'); if (c && typeof c === 'object') setCart(c); } catch { /* ignore */ } }, []);
-  const saveCart = (next: Record<string, number>) => { setCart(next); write(CART_KEY, JSON.stringify(next)); };
+  useEffect(() => { if (preview) return; try { const c = JSON.parse(read(CART_KEY) || '{}'); if (c && typeof c === 'object') setCart(c); } catch { /* ignore */ } }, [preview]);
+  const saveCart = (next: Record<string, number>) => { setCart(next); remember(CART_KEY, JSON.stringify(next)); };
   const maxQty = Math.max(1, choice?.doc.maxQtyPerLine ?? 20);
   const setQty = (key: string, q: number) => {
     const next = { ...cart };
@@ -85,6 +122,10 @@ export default function Shop({ catalog, status, docs, prices, onSubmit, onContac
   }, [catalog.products]);
   const toggle = (set: Set<string>, setter: (s: Set<string>) => void, v: string) => { const n = new Set(set); if (n.has(v)) n.delete(v); else n.add(v); setter(n); };
   const filtersOn = types.size + cats.size + artists.size > 0 || !!q || onlyOrderable;
+  const chipsOn = types.size + cats.size + artists.size;
+  // The chip groups fold behind one button at every size, so the items start near the top of the page.
+  const [showFilters, setShowFilters] = useState(false);
+  const hasChips = facets.types.length > 1 || facets.cats.length > 0 || facets.artists.length > 0;
   const visible = catalog.products.filter((p) => {
     if (types.size && !types.has(p.type)) return false;
     if (cats.size && !(p.category && cats.has(p.category))) return false;
@@ -97,9 +138,26 @@ export default function Shop({ catalog, status, docs, prices, onSubmit, onContac
     }
     return true;
   });
-  // Until staff-chosen sections exist, one grid: type order (bundles last), then name.
-  const isB = (t: string) => (t === 'bundle' ? 1 : 0);
-  const sorted = [...visible].sort((a, b) => isB(a.type) - isB(b.type) || a.type.localeCompare(b.type) || a.name.localeCompare(b.name));
+  // The catalogue is published in the staff's sort order, so filtering keeps it.
+  // Highlighted items get their own section on top and are left out of the main list.
+  const highlighted = useMemo(() => new Set(catalog.highlights ?? []), [catalog.highlights]);
+  const top = visible.filter((p) => highlighted.has(p.itemId));
+  const rest = visible.filter((p) => !highlighted.has(p.itemId));
+  // Group headings from the publish; items not covered by any section (new since publish) go last, unheaded.
+  const groups = useMemo(() => {
+    const sections = catalog.sections ?? [];
+    if (sections.length === 0) return null;
+    const pos = new Map<string, number>();
+    sections.forEach((s, i) => s.keys.forEach((k) => pos.set(k, i)));
+    const out = sections.map((s) => ({ title: s.title, items: [] as StoreProduct[] }));
+    const loose: StoreProduct[] = [];
+    for (const p of rest) { const i = pos.get(p.itemId); if (i === undefined) loose.push(p); else out[i].items.push(p); }
+    if (loose.length) out.push({ title: '', items: loose });
+    return out.filter((g) => g.items.length > 0);
+  }, [catalog.sections, rest]);
+  const [zoom, setZoom] = useState<{ src: string; name: string } | null>(null);
+  const card = (p: StoreProduct) => <ProductCard key={p.itemId} product={p} priced={priced} cart={cart} setQty={setQty} choice={choice} currency={catalog.currency} max={maxQty} onZoom={(src, name) => setZoom({ src, name })} />;
+  const blocksAt = (where: StoreBlockPosition) => <Blocks blocks={(catalog.blocks ?? []).filter((b) => b.position === where)} />;
 
   const lines = Object.entries(cart).map(([key, qty]) => ({ key, qty, p: priced.get(key) })).filter((l) => l.p);
   const okLines = lines.filter((l) => l.p!.orderable);
@@ -109,14 +167,18 @@ export default function Shop({ catalog, status, docs, prices, onSubmit, onContac
   const [open, setOpen] = useState(false);
   const [done, setDone] = useState<{ code: string; lines: typeof okLines; total: number; label: string } | null>(null);
   const [contactOpen, setContactOpen] = useState(false);
+  const theme = { ...DEFAULT_STORE_THEME, ...(catalog.theme ?? {}) };
 
   return (
-    <div className="shop">
+    <div className={`shop shop-btn-${theme.buttonStyle} ${preview ? 'is-preview' : ''}`} style={shopStyle(catalog.theme)}>
       {notice}
       <header className="shop-head">
-        <h1 className="shop-title">{catalog.title || 'Shop'}</h1>
-        {catalog.intro && <p className="shop-intro">{catalog.intro}</p>}
-        {onContact && !contactOpen && <p className="shop-intro"><button type="button" className="shop-link" onClick={() => setContactOpen(true)}>Contact us</button> with a question about an item or your order.</p>}
+        <div className="shop-head-text">
+          <h1 className="shop-title">{catalog.title || 'Shop'}</h1>
+          {catalog.intro && <p className="shop-intro">{catalog.intro}</p>}
+          {onContact && !contactOpen && <p className="shop-intro"><button type="button" className="shop-link" onClick={() => setContactOpen(true)}>Contact us</button> with a question about an item or your order.</p>}
+        </div>
+        {!done && <OrderTypeBanner state={state} choice={choice} onPick={pickLane} />}
       </header>
 
       {onContact && contactOpen && <ContactForm onSend={onContact} onClose={() => setContactOpen(false)} />}
@@ -125,32 +187,58 @@ export default function Shop({ catalog, status, docs, prices, onSubmit, onContac
         <ThankYou done={done} currency={catalog.currency} onBack={() => setDone(null)} />
       ) : (
         <>
-          <OrderTypeBanner state={state} choice={choice} onPick={pickLane} />
+          {blocksAt('top')}
 
           <section className="shop-tools" aria-label="Search and filters">
-            <label className="shop-search">
-              <span className="sr-only">Search the catalogue</span>
-              <input type="search" placeholder="Search by name, type, artist" value={q} onChange={(e) => setQ(e.target.value)} />
-            </label>
-            {facets.types.length > 1 && <ChipGroup label="Type" values={facets.types} on={types} onToggle={(v) => toggle(types, setTypes, v)} format={titleCase} />}
-            {facets.cats.length > 0 && <ChipGroup label="Series" values={facets.cats} on={cats} onToggle={(v) => toggle(cats, setCats, v)} />}
-            {facets.artists.length > 0 && <ChipGroup label="Artist" values={facets.artists} on={artists} onToggle={(v) => toggle(artists, setArtists, v)} />}
             <div className="shop-tools-row">
+              <label className="shop-search">
+                <span className="sr-only">Search the catalogue</span>
+                <input type="search" placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} />
+              </label>
+              {hasChips && (
+                <button type="button" className={`shop-chip shop-filter-toggle ${chipsOn > 0 ? 'is-on' : ''}`} aria-expanded={showFilters} aria-controls="shop-filters" onClick={() => setShowFilters(!showFilters)}>
+                  {chipsOn > 0 ? `Filters · ${chipsOn}` : 'Filters'}
+                </button>
+              )}
               {choice && (
                 <label className="shop-check"><input type="checkbox" checked={onlyOrderable} onChange={(e) => setOnlyOrderable(e.target.checked)} /> Only items in this {choice.lane.kind === 'preorder' ? 'preorder' : 'order'}</label>
               )}
-              <span className="shop-count">{visible.length} of {catalog.products.length} items</span>
-              {filtersOn && <button type="button" className="shop-link" onClick={() => { setQ(''); setTypes(new Set()); setCats(new Set()); setArtists(new Set()); setOnlyOrderable(false); }}>Clear filters</button>}
+              <span className="shop-count">{visible.length} of {catalog.products.length}</span>
+              {filtersOn && <button type="button" className="shop-link" onClick={() => { setQ(''); setTypes(new Set()); setCats(new Set()); setArtists(new Set()); setOnlyOrderable(false); }}>Clear</button>}
             </div>
+            {hasChips && showFilters && (
+              <div id="shop-filters" className="shop-filters">
+                {facets.types.length > 1 && <ChipGroup label="Type" values={facets.types} on={types} onToggle={(v) => toggle(types, setTypes, v)} format={titleCase} />}
+                {facets.cats.length > 0 && <ChipGroup label="Series" values={facets.cats} on={cats} onToggle={(v) => toggle(cats, setCats, v)} />}
+                {facets.artists.length > 0 && <ChipGroup label="Artist" values={facets.artists} on={artists} onToggle={(v) => toggle(artists, setArtists, v)} />}
+              </div>
+            )}
           </section>
 
           {visible.length === 0 ? <p className="shop-empty">Nothing matches. Try fewer filters.</p> : (
-            <section className="shop-section" aria-label="Catalogue">
-              <div className="shop-grid">
-                {sorted.map((p) => <ProductCard key={p.itemId} product={p} priced={priced} cart={cart} setQty={setQty} choice={choice} currency={catalog.currency} max={maxQty} />)}
-              </div>
-            </section>
+            <>
+              {top.length > 0 && (
+                <section className="shop-section shop-highlights" aria-labelledby="shop-highlights-title">
+                  <h2 id="shop-highlights-title" className="shop-section-title">Highlighted</h2>
+                  <div className="shop-grid">{top.map(card)}</div>
+                </section>
+              )}
+              {blocksAt('middle')}
+              {rest.length > 0 && !groups && (
+                <section className="shop-section" aria-labelledby={top.length > 0 ? 'shop-rest-title' : undefined} aria-label={top.length > 0 ? undefined : 'Catalogue'}>
+                  {top.length > 0 && <h2 id="shop-rest-title" className="shop-section-title">More items</h2>}
+                  <div className="shop-grid">{rest.map(card)}</div>
+                </section>
+              )}
+              {groups && groups.map((g, i) => (
+                <section key={`${g.title}-${i}`} className="shop-section" aria-label={g.title || 'Other items'}>
+                  {g.title && <h2 className="shop-section-title shop-group-title">{g.title}</h2>}
+                  <div className="shop-grid">{g.items.map(card)}</div>
+                </section>
+              ))}
+            </>
           )}
+          {blocksAt('bottom')}
 
           {choice && lines.length > 0 && !open && (
             <div className="shop-cartbar" role="region" aria-label="Cart">
@@ -174,14 +262,56 @@ export default function Shop({ catalog, status, docs, prices, onSubmit, onContac
           )}
         </>
       )}
+      {zoom && <Lightbox src={zoom.src} name={zoom.name} onClose={() => setZoom(null)} />}
     </div>
   );
 }
 
+/** Staff-placed banners and separators for one position. */
+function Blocks({ blocks }: { blocks: PublishedStoreBlock[] }) {
+  if (blocks.length === 0) return null;
+  return (
+    <>
+      {blocks.map((b) => {
+        if (b.type === 'separator') {
+          if (b.style === 'space' && !b.title) return <div key={b.id} className="shop-space" aria-hidden="true" />;
+          return (
+            <div key={b.id} className={`shop-sep ${b.style === 'space' ? 'shop-sep-space' : ''}`} role={b.title ? undefined : 'separator'}>
+              {b.title ? <h2 className="shop-sep-title">{b.title}</h2> : <hr />}
+            </div>
+          );
+        }
+        const img = <img className="shop-banner-img" src={b.src} alt={b.alt ?? ''} loading="lazy" />;
+        return b.href
+          ? <a key={b.id} className="shop-banner-block" href={b.href} target="_blank" rel="noopener noreferrer">{img}</a>
+          : <div key={b.id} className="shop-banner-block">{img}</div>;
+      })}
+    </>
+  );
+}
+
+/** A thumbnail, enlarged. Closes on Escape, the backdrop or the button. */
+function Lightbox({ src, name, onClose }: { src: string; name: string; onClose: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => { const d = ref.current; if (d && !d.open) d.showModal(); }, []);
+  return (
+    <dialog ref={ref} className="shop-lightbox" onClose={onClose} onCancel={(e) => { e.preventDefault(); onClose(); }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} aria-label={`${name}, enlarged`}>
+      <div className="shop-lightbox-body">
+        <img src={src} alt={name} />
+        <div className="shop-lightbox-row">
+          <span>{name}</span>
+          <button type="button" className="shop-btn" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </dialog>
+  );
+}
+
+/** What can be ordered now, as a compact card beside the title rather than a full-width row. */
 function OrderTypeBanner({ state, choice, onPick }: { state: ReturnType<typeof storeState>; choice?: StoreChoice; onPick: (id: string) => void }) {
   if (state.choices.length === 0) {
     return (
-      <div className="shop-banner shop-banner-quiet">
+      <div className="shop-status shop-status-quiet">
         <b>Not taking orders right now</b>
         <span>Browse the catalogue. Follow our socials for the next preorder.</span>
       </div>
@@ -190,25 +320,24 @@ function OrderTypeBanner({ state, choice, onPick }: { state: ReturnType<typeof s
   if (state.choices.length === 1) {
     const c = state.choices[0];
     return (
-      <div className={`shop-banner ${c.lane.kind === 'preorder' ? 'shop-banner-po' : 'shop-banner-mo'}`}>
+      <div className={`shop-status ${c.lane.kind === 'preorder' ? 'shop-status-po' : 'shop-status-mo'}`}>
         <b>{c.label}</b>
         <span>{c.detail}</span>
       </div>
     );
   }
   return (
-    <fieldset className="shop-choice">
+    <fieldset className="shop-status shop-status-choice">
       <legend>How do you want to order?</legend>
-      <div className="shop-choice-row">
+      <div className="shop-seg" role="radiogroup">
         {state.choices.map((c) => (
-          <label key={c.lane.id} className={`shop-option ${choice?.lane.id === c.lane.id ? 'is-on' : ''}`}>
+          <label key={c.lane.id} className={`shop-seg-opt ${choice?.lane.id === c.lane.id ? 'is-on' : ''}`}>
             <input type="radio" name="lane" checked={choice?.lane.id === c.lane.id} onChange={() => onPick(c.lane.id)} />
-            <b>{c.label}</b>
-            <span>{c.detail}</span>
+            {c.label}
           </label>
         ))}
       </div>
-      {!choice && <p className="shop-hint">Pick one to see prices and add items.</p>}
+      <span>{choice ? choice.detail : 'Pick one to see prices and add items.'}</span>
     </fieldset>
   );
 }
@@ -243,8 +372,9 @@ function PriceLine({ price, currency, kind }: { price: StorePrice; currency: str
   );
 }
 
-function ProductCard({ product: p, priced, cart, setQty, choice, currency, max }: {
+function ProductCard({ product: p, priced, cart, setQty, choice, currency, max, onZoom }: {
   product: StoreProduct; priced: Map<string, Priced>; cart: Record<string, number>; setQty: (k: string, q: number) => void; choice?: StoreChoice; currency: string; max: number;
+  onZoom: (src: string, name: string) => void;
 }) {
   const named = p.variants.length > 1 || !!p.variants[0]?.name;
   const firstOrderable = p.variants.find((v) => priced.get(v.key)?.orderable) ?? p.variants[0];
@@ -253,9 +383,12 @@ function ProductCard({ product: p, priced, cart, setQty, choice, currency, max }
   const thumb = cur.variant.thumb || p.thumb;
   const inCart = cart[sel] ?? 0;
   const anyOrderable = p.variants.some((v) => priced.get(v.key)?.orderable);
+  const fullName = cur.variant.name ? `${p.name} · ${cur.variant.name}` : p.name;
   return (
     <article className="shop-card">
-      {thumb ? <img className="shop-thumb" src={thumb} alt="" loading="lazy" /> : <div className="shop-thumb shop-thumb-empty" aria-hidden="true" />}
+      {thumb
+        ? <button type="button" className="shop-thumb-btn" onClick={() => onZoom(thumb, fullName)} aria-label={`Enlarge the picture of ${fullName}`}><img className="shop-thumb" src={thumb} alt="" loading="lazy" /></button>
+        : <div className="shop-thumb shop-thumb-empty" aria-hidden="true" />}
       <div className="shop-card-body">
         <h3 className="shop-item-title">{p.name}</h3>
         <div className="shop-meta">{[p.type === 'bundle' ? 'Bundle' : titleCase(p.type), p.category, p.artist].filter(Boolean).join(' · ')}</div>

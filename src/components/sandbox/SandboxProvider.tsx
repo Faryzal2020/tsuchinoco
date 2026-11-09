@@ -18,6 +18,7 @@ import { transactionId } from '@/lib/forms';
 import { orderTypeForBatch } from '@/lib/pricing';
 import { paymentOf } from '@/lib/orders';
 import { fx } from '@/lib/functions';
+import { primeMedia } from '@/lib/media';
 import { emailRef, emailsDue, notificationsOf } from '@/lib/orderEmail';
 import type { Batch, Event, Order, OrderStatus, PublicForm, StoreCatalog, StoreStatus } from '@/types';
 import type { ShopDraft } from '@/components/shop/Shop';
@@ -30,8 +31,8 @@ interface Full extends SandboxState {
 
 function publishInto(s: Full): Full {
   const storeEvent = s.events.find((e) => e.kind === 'store') as Event;
-  const input = { items: s.items, events: s.events, batches: s.batches, formsById: new Map(), settings: s.settings, storeEvent, status: s.storeStatus };
-  const b = buildStorefront({ ...input, media: new Map() });
+  const input = { items: s.items, events: s.events, batches: s.batches, formsById: new Map(), settings: s.settings, storeEvent, status: s.storeStatus, staff: s.staff };
+  const b = buildStorefront({ ...input, media: new Map(s.media.map((m) => [m.id, m])) });
   const version = (s.catalog?.version ?? 0) + 1;
   const lanes: Record<string, PublicForm> = {};
   for (const old of Object.values(s.lanes)) lanes[old.id] = { ...old, enabled: false };
@@ -45,7 +46,12 @@ function withEmailsOnCreate(o: Order, settings: Full['settings']): Order {
   return { ...o, emails: [{ type: 'received', to: o.customer.email, at: Date.now(), ok: !!o.customer.email, ref: emailRef(o, 'received'), ...(o.customer.email ? { id: 'sandbox' } : { error: 'No e-mail address on the order.' }) }] };
 }
 
-const initial = (): Full => publishInto({ ...makeSandbox(), catalog: null, lanes: {} });
+const initial = (): Full => {
+  const s = makeSandbox();
+  // The staff preview resolves images through the media cache, so the sample images go in first.
+  for (const m of s.media) primeMedia(m);
+  return publishInto({ ...s, catalog: null, lanes: {} });
+};
 
 interface SandboxApi {
   state: Full;
@@ -155,7 +161,7 @@ export default function SandboxProvider({ children }: { children: React.ReactNod
       events: s.events, batches: s.batches, openOrders: s.orders.filter((o) => ['awaiting_pickup', 'not_collected', 'awaiting_shipment'].includes(o.status)),
       movements: [], wrapups: [], forms: [], formsById: new Map(), publicForms, publicFormsById: new Map(publicForms.map((f) => [f.id, f])),
       submissions: [], templates: [], templatesById: new Map(), themePresets: [], settings: s.settings, publicPrices: s.publicPrices,
-      storeCatalog: s.catalog, storeStatus: s.storeStatus, staffName: (id: string) => (id === SANDBOX_ME ? 'Sandbox staff' : id),
+      storeCatalog: s.catalog, storeStatus: s.storeStatus, staffName: (id: string) => s.staff.find((x) => x.id === id)?.displayName || id,
     };
   }, [s]);
 

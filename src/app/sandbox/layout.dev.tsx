@@ -14,6 +14,7 @@ const LINKS = [
   { href: '/sandbox/storefront/', label: 'Storefront (staff)' },
   { href: '/sandbox/shop/', label: 'Shop (customer)' },
   { href: '/sandbox/settings/', label: 'Order e-mails' },
+  { href: '/sandbox/offering/', label: 'Batch offering' },
   { href: '/sandbox/emails/', label: 'Emails' },
 ];
 

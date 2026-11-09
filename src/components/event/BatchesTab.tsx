@@ -52,7 +52,7 @@ export default function BatchesTab({ event, batches, orders }: TabProps) {
 function BatchCard({ event, batch: b, batches, orderCount }: { event: TabProps['event']; batch: Batch; batches: Batch[]; orderCount: number }) {
   const { me } = useAuth();
   const { allowDelete } = usePrefs();
-  const { items, itemsById, settings, formsById, publicFormsById, events, storeCatalog, storeStatus } = useData();
+  const { items, itemsById, settings, formsById, publicFormsById, events, storeCatalog, storeStatus, staff } = useData();
   const { run, toast } = useToast();
   const [editOffering, setEditOffering] = useState(false);
   const [offering, setOffering] = useState<OfferingEntry[]>(b.offering);
@@ -84,7 +84,7 @@ function BatchCard({ event, batch: b, batches, orderCount }: { event: TabProps['
   const syncStorefront = async (next: Batch) => {
     if (next.mode !== 'preorder') return;
     if (next.status === 'open' && next.storefront !== false) {
-      await storeRepo.publish({ items, events, batches: batches.map((x) => (x.id === next.id ? next : x)), formsById, settings, current: storeCatalog, status: storeStatus, by: me });
+      await storeRepo.publish({ items, events, batches: batches.map((x) => (x.id === next.id ? next : x)), formsById, settings, current: storeCatalog, status: storeStatus, staff, by: me });
     } else {
       await storeRepo.mirrorBatch(next.id, false);
     }

@@ -5,8 +5,9 @@
 // Each lane is a publicForms document, so the existing submission rules validate storefront orders
 // exactly like Forms orders: `store_<batchId>` for an open preorder batch, `store_mail` for mail order.
 import type {
-  Batch, Event, FormDoc, Item, Media, OrderType, PublicForm, PublicPrices, Settings, StoreCatalog, StoreLaneInfo, StoreProduct, StoreStatus,
+  Batch, Event, FormDoc, Item, Media, OrderType, PublicForm, PublicPrices, PublishedStoreBlock, Settings, Staff, StoreBlock, StoreCatalog, StoreLaneInfo, StoreProduct, StoreSortKey, StoreSortRule, StoreStatus, StoreTheme, StorefrontSettings,
 } from '@/types';
+import { DEFAULT_STORE_SORT, DEFAULT_STORE_THEME } from '@/types';
 import { variantKey, variantsOf, variantOf } from './keys';
 import { catalogPrice, orderTypeForBatch, quote, storefrontOf, type Quote } from './pricing';
 import { acceptWindow, DEFAULT_THEME, eventCode, offeringKey, pickupDaysFor, windowState } from './forms';
@@ -34,10 +35,73 @@ const mediaSrc = (media: Map<string, Media>, id?: string) => {
   return m?.url || m?.dataUrl;
 };
 
-/** Every active item, with its active variants, as the storefront lists it. */
-export function buildProducts(items: Item[], media: Map<string, Media>): StoreProduct[] {
-  return items
-    .filter((i) => i.active)
+export const SORT_KEY_LABELS: Record<StoreSortKey, string> = {
+  series: 'Series', type: 'Type', manager: 'Product manager', artist: 'Artist', name: 'Name', price: 'Price', added: 'Date added',
+};
+
+/** Keeps only well-formed rules; an empty list falls back to the default order. */
+export function sortRulesOf(sf: Pick<StorefrontSettings, 'sort'>): StoreSortRule[] {
+  const ok = (sf.sort ?? []).filter((r) => r && r.key in SORT_KEY_LABELS && (r.dir === 'asc' || r.dir === 'desc'));
+  return ok.length > 0 ? ok : DEFAULT_STORE_SORT;
+}
+
+/** The theme with every default filled in, so the shop can rely on each field. */
+export const storeThemeOf = (sf: Pick<StorefrontSettings, 'theme'>): StoreTheme => ({ ...DEFAULT_STORE_THEME, ...(sf.theme ?? {}) });
+
+/** The text value one sort level groups by. Empty means "unknown", which always sorts last. */
+export function sortValue(i: Item, key: StoreSortKey, managerName: (i: Item) => string): string {
+  switch (key) {
+    case 'series': return (i.category ?? '').trim();
+    case 'type': return i.kind === 'bundle' ? 'Bundle' : (i.type ?? '').trim();
+    case 'manager': return managerName(i);
+    case 'artist': return (i.artist ?? '').trim();
+    case 'name': return i.name;
+    case 'price': return '';
+    case 'added': return '';
+  }
+}
+
+/**
+ * Storefront order, from the staff's sort levels: each level compares its value, blanks last whatever
+ * the direction, and ties fall through to the next level, then to the name. The order is only an
+ * order; manager names stay out of the public catalogue.
+ */
+export function storeOrder(items: Item[], staff: Pick<Staff, 'id' | 'displayName'>[] = [], rules: StoreSortRule[] = DEFAULT_STORE_SORT): Item[] {
+  const coll = new Intl.Collator('en', { sensitivity: 'base', numeric: true });
+  const names = new Map(staff.map((s) => [s.id, s.displayName]));
+  // Same name the catalogue page shows: the staff member's display name, else the imported name.
+  const manager = (i: Item) => (names.get(i.managerId) || i.managerName || i.managerId || '').trim();
+  const level = (a: Item, b: Item, r: StoreSortRule): number => {
+    const sign = r.dir === 'desc' ? -1 : 1;
+    if (r.key === 'price') return sign * (a.price - b.price);
+    if (r.key === 'added') return sign * ((a.createdAt ?? 0) - (b.createdAt ?? 0));
+    const va = sortValue(a, r.key, manager), vb = sortValue(b, r.key, manager);
+    return (Number(!va) - Number(!vb)) || sign * coll.compare(va, vb);
+  };
+  return [...items].sort((a, b) => {
+    for (const r of rules) { const c = level(a, b, r); if (c) return c; }
+    return coll.compare(a.name, b.name);
+  });
+}
+
+/** Headings for the main list: one per run of the first sort level. Only text levels make headings. */
+export function groupSections(items: Item[], rules: StoreSortRule[], staff: Pick<Staff, 'id' | 'displayName'>[] = []): { title: string; keys: string[] }[] {
+  const first = rules[0];
+  if (!first || first.key === 'price' || first.key === 'added') return [];
+  const names = new Map(staff.map((s) => [s.id, s.displayName]));
+  const manager = (i: Item) => (names.get(i.managerId) || i.managerName || i.managerId || '').trim();
+  const out: { title: string; keys: string[] }[] = [];
+  for (const i of items) {
+    const title = sortValue(i, first.key, manager) || 'Other';
+    const last = out[out.length - 1];
+    if (last && last.title === title) last.keys.push(i.id); else out.push({ title, keys: [i.id] });
+  }
+  return out.length > 1 ? out : [];
+}
+
+/** Every active item, with its active variants, in storefront order (see storeOrder). */
+export function buildProducts(items: Item[], media: Map<string, Media>, staff?: Pick<Staff, 'id' | 'displayName'>[], rules?: StoreSortRule[]): StoreProduct[] {
+  return storeOrder(items.filter((i) => i.active), staff, rules)
     .map((i) => ({
       itemId: i.id, name: i.name, kind: i.kind, type: i.kind === 'bundle' ? 'bundle' : i.type,
       category: i.category || undefined, artist: i.artist || undefined, thumb: mediaSrc(media, i.thumbnailId),
@@ -47,19 +111,35 @@ export function buildProducts(items: Item[], media: Map<string, Media>): StorePr
         return { key, name: v.name, thumb: mediaSrc(media, i.kind === 'bundle' ? undefined : variantOf(i, v.id)?.thumbnailId), fallback: { po: p.po, ots: p.ots, ...(p.discountPercent ? { discountPercent: p.discountPercent } : {}) } };
       }),
     }))
-    .filter((p) => p.variants.length > 0)
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .filter((p) => p.variants.length > 0);
 }
 
-export const mediaIdsForProducts = (items: Item[]): string[] => {
+/** Media a publish needs: item and variant thumbnails, the wallpaper and the banner images. */
+export const mediaIdsForProducts = (items: Item[], sf?: Pick<StorefrontSettings, 'theme' | 'blocks'>): string[] => {
   const ids = new Set<string>();
   for (const i of items) {
     if (!i.active) continue;
     if (i.thumbnailId) ids.add(i.thumbnailId);
     for (const v of i.variants ?? []) if (v.thumbnailId) ids.add(v.thumbnailId);
   }
+  if (sf?.theme?.wallpaperId) ids.add(sf.theme.wallpaperId);
+  for (const b of sf?.blocks ?? []) if (b.type === 'banner' && b.imageId) ids.add(b.imageId);
   return [...ids];
 };
+
+/** Blocks as the shop reads them; a banner whose image is missing is dropped. */
+export function publishBlocks(blocks: StoreBlock[] | undefined, media: Map<string, Media>): PublishedStoreBlock[] {
+  const out: PublishedStoreBlock[] = [];
+  for (const b of blocks ?? []) {
+    if (b.type === 'separator') { out.push(b); continue; }
+    const src = mediaSrc(media, b.imageId);
+    if (!src) continue;
+    const { imageId: _id, ...rest } = b;
+    void _id;
+    out.push({ ...rest, src });
+  }
+  return out;
+}
 
 function laneDoc(id: string, eventId: string, batchId: string, mode: Batch['mode'], title: string, items: PublicForm['items'], settings: Settings, pickupDays: string[], extra: Partial<PublicForm>, version: number, enabled: boolean): Omit<PublicForm, 'id'> {
   return {
@@ -78,12 +158,15 @@ export interface StoreBuild {
 export function buildStorefront(input: {
   items: Item[]; events: Event[]; batches: Batch[]; formsById: Map<string, FormDoc>; media: Map<string, Media>;
   settings: Settings; storeEvent: Event; status: StoreStatus | null;
+  /** For the manager order; without it items fall back to their imported manager name. */
+  staff?: Pick<Staff, 'id' | 'displayName'>[];
 }): StoreBuild {
-  const { items, events, batches, formsById, media, settings, storeEvent, status } = input;
+  const { items, events, batches, formsById, media, settings, storeEvent, status, staff } = input;
   const sf = storefrontOf(settings);
+  const rules = sortRulesOf(sf);
   const itemsById = new Map(items.map((i) => [i.id, i]));
   const eventById = new Map(events.map((e) => [e.id, e]));
-  const products = buildProducts(items, media);
+  const products = buildProducts(items, media, staff, rules);
   const lanes: StoreBuild['lanes'] = [];
   const laneInfo: StoreLaneInfo[] = [];
 
@@ -123,13 +206,27 @@ export function buildStorefront(input: {
     .filter((e) => e.kind !== 'store' && e.status === 'upcoming' && e.startDate)
     .map((e) => ({ name: e.name, code: eventCode(e), from: new Date(`${e.startDate}T00:00:00`).getTime(), until: new Date(`${e.endDate || e.startDate}T23:59:59.999`).getTime() }));
 
+  const highlights = highlightsFor(products, sf.highlights);
+  // Headings cover the main list only; highlighted items sit in their own section above it.
+  const listed = products.filter((p) => !highlights.includes(p.itemId)).map((p) => itemsById.get(p.itemId)).filter((i): i is Item => !!i);
+  const theme = storeThemeOf(sf);
+  const wallpaper = mediaSrc(media, theme.wallpaperId);
+  const { wallpaperId: _w, ...themeOut } = theme;
+  void _w;
   const catalog: StoreBuild['catalog'] = {
     title: sf.shopTitle ?? '', intro: sf.shopIntro ?? '', currency: settings.currency,
-    products, lanes: laneInfo, eventDays, sections: [], highlights: [],
+    products, lanes: laneInfo, eventDays, sections: sf.groupHeadings ? groupSections(listed, rules, staff) : [], highlights,
+    theme: wallpaper ? { ...themeOut, wallpaper } : themeOut, blocks: publishBlocks(sf.blocks, media),
     paymentText: sf.paymentText ?? '', paymentChoices: sf.paymentChoices ?? [],
     requirePhone: true, requireEmail: true, publishedHash: '',
   };
   return { catalog, lanes };
+}
+
+/** Highlighted item ids that are on the storefront, in storefront order. */
+export function highlightsFor(products: StoreProduct[], ids: string[] | undefined): string[] {
+  const on = new Set(ids ?? []);
+  return products.filter((p) => on.has(p.itemId)).map((p) => p.itemId);
 }
 
 /**
@@ -137,7 +234,7 @@ export function buildStorefront(input: {
  * media id. Publish stores it; the Storefront page compares it to show "changed since publish".
  */
 export function storeHashFor(input: Omit<Parameters<typeof buildStorefront>[0], 'media'>): string {
-  const stub = new Map(mediaIdsForProducts(input.items).map((id) => [id, { url: id } as Media]));
+  const stub = new Map(mediaIdsForProducts(input.items, storefrontOf(input.settings)).map((id) => [id, { url: id } as Media]));
   const b = buildStorefront({ ...input, media: stub });
   return storeHash(b.catalog, b.lanes);
 }
@@ -146,7 +243,7 @@ export function storeHashFor(input: Omit<Parameters<typeof buildStorefront>[0], 
 export function storeHash(catalog: StoreBuild['catalog'], lanes: StoreBuild['lanes']): string {
   const products = catalog.products.map((p) => [p.itemId, p.name, p.type, p.category, p.artist, p.thumb ?? '', p.variants.map((v) => [v.key, v.name, v.thumb ?? ''])]);
   const ls = lanes.map((l) => [l.id, l.doc.batchId, Object.keys(l.doc.items).sort(), l.doc.acceptFrom, l.doc.acceptUntil, l.doc.overrides, l.doc.settings.pickupDays]);
-  const s = JSON.stringify([catalog.title, catalog.intro, catalog.paymentText, catalog.paymentChoices, products, ls, catalog.eventDays]);
+  const s = JSON.stringify([catalog.title, catalog.intro, catalog.paymentText, catalog.paymentChoices, products, ls, catalog.eventDays, catalog.highlights, catalog.sections, catalog.theme, catalog.blocks]);
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
   return (h >>> 0).toString(36);
