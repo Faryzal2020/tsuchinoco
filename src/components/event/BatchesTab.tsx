@@ -63,7 +63,7 @@ function BatchCard({ event, batch: b, batches, orderCount }: { event: TabProps['
   const form = formsById.get(b.id);
   const pub = publicFormsById.get(b.id);
   const legacy = b.form?.provider === 'jotform';
-  const changed = form ? formChangedSincePublish(form, b, itemsById) : false;
+  const changed = form ? formChangedSincePublish(form, b, itemsById, settings) : false;
 
   const act = async (key: string, fn: () => Promise<unknown>, ok?: string) => { setBusy(key); await run(fn, ok); setBusy(''); };
 

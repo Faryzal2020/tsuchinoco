@@ -8,6 +8,8 @@ import { useToast } from '@/components/ui/Toast';
 import { QueryPage, useQuery } from '@/lib/useQuery';
 import { formRepo, templateRepo, themePresetRepo } from '@/lib/repo';
 import { formChangedSincePublish, previewPublicForm, publishForm } from '@/lib/formActions';
+import { shippingOf, unweighedWarning, validFee } from '@/lib/shipping';
+import { formatMoney } from '@/lib/format';
 import { cloneFormFromBatch, applyTemplateToForm, saveFormAsTemplate } from '@/lib/templateActions';
 import {
   BLOCK_NAMES,
@@ -76,7 +78,7 @@ function FormStudio() {
   const id = get('id');
   const { me } = useAuth();
   const { formsById, batches, events, itemsById, settings, publicFormsById, templates, themePresets } = useData();
-  const { run, toast } = useToast();
+  const { run, toast, error } = useToast();
 
   const originalForm = formsById.get(id);
   const batch = batches.find((b) => b.id === id);
@@ -168,7 +170,7 @@ function FormStudio() {
   }
 
   const isUnsaved = JSON.stringify(draft) !== JSON.stringify(originalForm);
-  const changedSincePublish = formChangedSincePublish(draft, batch, itemsById);
+  const changedSincePublish = formChangedSincePublish(draft, batch, itemsById, settings);
   const previewSize = snap ? publicFormSize(snap) : 0;
   const publicLink = formUrl(draft.id);
 
@@ -185,8 +187,10 @@ function FormStudio() {
     setBusy('publish');
     await run(async () => {
       await formRepo.patch(draft.id, draft, me);
-      await publishForm(draft, batch, event, itemsById, settings, pub, me);
-    }, pub ? 'Republished' : 'Published');
+      const r = await publishForm(draft, batch, event, itemsById, settings, pub, me);
+      const warn = unweighedWarning(r.unweighed);
+      if (warn) error(`${pub ? 'Republished' : 'Published'}. ${warn}`); else toast(pub ? 'Republished' : 'Published');
+    });
     setBusy(null);
   };
 
@@ -766,6 +770,46 @@ function FormStudio() {
                         setDraft({ ...draft, settings: { ...draft.settings, requireEmail: e.target.checked } })
                       }
                     />
+                  </div>
+                </div>
+
+                {/* Shipping fees: blank follows the storefront's shipping settings */}
+                <div className="border border-line rounded-lg p-3 bg-cream/30 space-y-2">
+                  <span className="font-bold text-ink">Shipping fees</span>
+                  <p className="hint">Added to orders that ship; booth pickups pay neither. Blank = the storefront&rsquo;s fees ({formatMoney(shippingOf(settings).handlingFee, settings.currency)} handling, {formatMoney(shippingOf(settings).packagingFee, settings.currency)} packaging).</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label={`Handling fee (${settings.currency})`}>
+                      <Input
+                        type="number"
+                        min={0}
+                        step={1000}
+                        small
+                        placeholder={`${shippingOf(settings).handlingFee}`}
+                        value={draft.settings.handlingFee ?? ''}
+                        onChange={(e) => {
+                          const { handlingFee: _h, ...rest } = draft.settings;
+                          void _h;
+                          const v = validFee(e.target.value === '' ? undefined : Number(e.target.value));
+                          setDraft({ ...draft, settings: v === undefined ? rest : { ...rest, handlingFee: v } });
+                        }}
+                      />
+                    </Field>
+                    <Field label={`Packaging fee (${settings.currency})`}>
+                      <Input
+                        type="number"
+                        min={0}
+                        step={1000}
+                        small
+                        placeholder={`${shippingOf(settings).packagingFee}`}
+                        value={draft.settings.packagingFee ?? ''}
+                        onChange={(e) => {
+                          const { packagingFee: _p, ...rest } = draft.settings;
+                          void _p;
+                          const v = validFee(e.target.value === '' ? undefined : Number(e.target.value));
+                          setDraft({ ...draft, settings: v === undefined ? rest : { ...rest, packagingFee: v } });
+                        }}
+                      />
+                    </Field>
                   </div>
                 </div>
 

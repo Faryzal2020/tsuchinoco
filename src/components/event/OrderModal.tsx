@@ -6,28 +6,31 @@ import { useData } from '@/lib/data';
 import { useToast } from '@/components/ui/Toast';
 import { orderRepo } from '@/lib/repo';
 import { formatDate, formatDateTime, formatMoney, isPastIso, todayIso } from '@/lib/format';
-import type { Event, Order } from '@/types';
+import type { Event, Order, OrderShipping } from '@/types';
 import Button from '@/components/ui/Button';
 import { Field, Input, Textarea } from '@/components/ui/Field';
 import { Kv, Pill } from '@/components/ui/Bits';
 import { DeliverDialog, EmailLog, OrderStagePill, OrderTypeCell } from '@/components/orders/OrderBits';
-import { holdOf, ORDER_STATUS_LABELS, orderTypeOf, paymentOf } from '@/lib/orders';
+import { holdOf, ORDER_STATUS_LABELS, orderTypeOf, paymentOf, shipFromOf } from '@/lib/orders';
+import { shippingOf, shippingTotal, validFee } from '@/lib/shipping';
 import { Modal } from '@/components/ui/Dialog';
 import { useVariantLabel } from '@/components/VariantSelect';
 
 export default function OrderModal({ order: o, event, onClose }: { order: Order | null; event: Event; onClose: () => void }) {
   const { me } = useAuth();
   const { settings, batches, events, staffName } = useData();
-  const { run } = useToast();
+  const { run, error } = useToast();
   const labelOf = useVariantLabel();
   const [edit, setEdit] = useState(false);
   const [c, setC] = useState({ name: '', email: '', phone: '', address: '', notes: '', contactNote: '' });
   const [busy, setBusy] = useState(false);
   const [deliver, setDeliver] = useState(false);
+  const [shipEdit, setShipEdit] = useState<{ name: string; fee: string; handling: string; packaging: string; note: string } | null>(null);
 
   useEffect(() => {
     if (o) setC({ name: o.customer.name, email: o.customer.email, phone: o.customer.phone, address: o.customer.address ?? '', notes: o.notes ?? '', contactNote: o.contact?.note ?? '' });
     setEdit(false);
+    setShipEdit(null);
   }, [o]);
 
   if (!o) return <Modal open={false} onClose={onClose} title="">{null}</Modal>;
@@ -42,6 +45,25 @@ export default function OrderModal({ order: o, event, onClose }: { order: Order 
   const type = orderTypeOf(o, batch, event);
   const held = holdOf(o, type, events);
   const unpaidTitle = paid ? undefined : 'Mark the order paid first';
+  const shipFrom = shipFromOf(o, type, event, events);
+
+  // Staff change a fee (or add shipping a mail order was not charged); the total follows.
+  const openShipEdit = () => {
+    const s = o.shipping;
+    const d = shippingOf(settings);
+    setShipEdit({ name: s?.name ?? 'Lion Parcel', fee: String(s?.fee ?? ''), handling: String(s?.handlingFee ?? d.handlingFee), packaging: String(s?.packagingFee ?? d.packagingFee), note: '' });
+  };
+  const saveShipping = () => {
+    if (!shipEdit) return;
+    const fee = validFee(Number(shipEdit.fee));
+    const handlingFee = validFee(Number(shipEdit.handling));
+    const packagingFee = validFee(Number(shipEdit.packaging));
+    if (shipEdit.fee.trim() === '' || fee === undefined || handlingFee === undefined || packagingFee === undefined) { error('Enter the shipping, handling and packaging amounts.'); return; }
+    if (!shipEdit.note.trim()) { error('Add a note saying why the shipping changed.'); return; }
+    const base: OrderShipping = o.shipping ?? { courier: 'lion', service: 'manual', name: shipEdit.name.trim() || 'Shipping', fee: 0, handlingFee: 0, packagingFee: 0, grams: 0, billedKg: 0, postalCode: '', quotedAt: Date.now() };
+    const next: OrderShipping = { ...base, name: shipEdit.name.trim() || base.name, fee, handlingFee, packagingFee, note: shipEdit.note.trim() };
+    return act(() => orderRepo.patch(o.id, { shipping: next, total: o.total - shippingTotal(o.shipping) + shippingTotal(next) }, me), 'Shipping updated').then(() => setShipEdit(null));
+  };
 
   return (
     <Modal open={!!o} onClose={onClose} title={`Order · ${o.customer.name}`} wide
@@ -72,6 +94,12 @@ export default function OrderModal({ order: o, event, onClose }: { order: Order 
               <div className="mt-2"><Button size="sm" busy={busy} onClick={() => act(() => orderRepo.patch(o.id, { priceFlag: '' }, me), 'Price confirmed')}>Price confirmed</Button></div>
             </div>
           )}
+          {o.shippingFlag && (
+            <div className="mb-3 rounded-md bg-yellow-soft px-3 py-2 text-sm text-yellow-ink">
+              {o.shippingFlag}
+              <div className="mt-2"><Button size="sm" busy={busy} onClick={() => act(() => orderRepo.patch(o.id, { shippingFlag: '' }, me), 'Shipping checked')}>Shipping checked</Button></div>
+            </div>
+          )}
           {held && (
             <div className="mb-3 rounded-md bg-blue-soft px-3 py-2 text-sm text-blue-ink">
               On hold: ships after {held.name} ends on {formatDate(held.endDate || held.startDate)}.
@@ -86,6 +114,7 @@ export default function OrderModal({ order: o, event, onClose }: { order: Order 
           {o.transactionId && <Kv k="Order ID" v={<span className="mono text-sm">{o.transactionId}</span>} />}
           <Kv k="Submitted" v={formatDateTime(o.submittedAt)} />
           {o.pickupDay && <Kv k="Pickup day" v={o.pickupDay} />}
+          {shipFrom && <Kv k="Ships" v={shipFrom.label} />}
           <Kv k="Total" v={formatMoney(o.total, settings.currency)} />
           <Kv k="Payment" v={
             <span className="inline-flex flex-wrap items-center gap-2">
@@ -151,6 +180,46 @@ export default function OrderModal({ order: o, event, onClose }: { order: Order 
               })}
             </tbody>
           </table>
+          {o.fulfilment === 'mail' && (
+            <>
+              <div className="flex items-center justify-between mt-4 mb-1">
+                <h3 className="font-bold">Shipping</h3>
+                {!shipEdit && !terminal && <Button size="sm" onClick={openShipEdit}>{o.shipping ? 'Change' : 'Add shipping'}</Button>}
+              </div>
+              {!shipEdit && (o.shipping ? (
+                <table className="w-full text-sm">
+                  <tbody>
+                    <tr className="border-t border-line">
+                      <td className="py-1">
+                        {o.shipping.name}{o.shipping.billedKg > 0 && ` · ${o.shipping.billedKg} kg`}{o.shipping.postalCode && ` · to ${o.shipping.postalCode}`}
+                        <span className="hint block">
+                          {o.shipping.grams > 0 && `Parcel ${o.shipping.grams.toLocaleString('id-ID')} g with packing. `}
+                          {o.shipping.requoted ? 'Priced again at import.' : o.shipping.quoteId ? `Quoted ${formatDateTime(o.shipping.quotedAt)}.` : ''}
+                          {o.shipping.note && ` Changed: ${o.shipping.note}`}
+                        </span>
+                      </td>
+                      <td className="py-1 text-right tabular-nums align-top whitespace-nowrap">{formatMoney(o.shipping.fee, settings.currency)}</td>
+                    </tr>
+                    {o.shipping.handlingFee > 0 && <tr className="border-t border-line"><td className="py-1">Handling</td><td className="py-1 text-right tabular-nums whitespace-nowrap">{formatMoney(o.shipping.handlingFee, settings.currency)}</td></tr>}
+                    {o.shipping.packagingFee > 0 && <tr className="border-t border-line"><td className="py-1">Packaging</td><td className="py-1 text-right tabular-nums whitespace-nowrap">{formatMoney(o.shipping.packagingFee, settings.currency)}</td></tr>}
+                  </tbody>
+                </table>
+              ) : <p className="hint">No shipping charged on this order.</p>)}
+              {shipEdit && (
+                <div className="grid gap-2 rounded-lg border border-line p-3">
+                  <Field label="Service"><Input small value={shipEdit.name} onChange={(e) => setShipEdit({ ...shipEdit, name: e.target.value })} /></Field>
+                  <div className="grid grid-cols-3 gap-2">
+                    <Field label="Shipping"><Input small type="number" min={0} value={shipEdit.fee} onChange={(e) => setShipEdit({ ...shipEdit, fee: e.target.value })} /></Field>
+                    <Field label="Handling"><Input small type="number" min={0} value={shipEdit.handling} onChange={(e) => setShipEdit({ ...shipEdit, handling: e.target.value })} /></Field>
+                    <Field label="Packaging"><Input small type="number" min={0} value={shipEdit.packaging} onChange={(e) => setShipEdit({ ...shipEdit, packaging: e.target.value })} /></Field>
+                  </div>
+                  <Field label="Why it changed"><Input small placeholder="e.g. agreed with the customer by WhatsApp" value={shipEdit.note} onChange={(e) => setShipEdit({ ...shipEdit, note: e.target.value })} /></Field>
+                  <p className="hint">The order total changes by the difference. The customer is not e-mailed.</p>
+                  <div className="flex gap-2 justify-end"><Button size="sm" onClick={() => setShipEdit(null)}>Cancel</Button><Button size="sm" variant="primary" busy={busy} onClick={saveShipping}>Save shipping</Button></div>
+                </div>
+              )}
+            </>
+          )}
           {o.lines.some((l) => l.fromBundleItemId) && (
             <>
               <h4 className="hint mt-3 mb-1">Expanded for stock</h4>

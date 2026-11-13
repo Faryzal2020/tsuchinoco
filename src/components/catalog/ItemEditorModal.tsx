@@ -12,6 +12,7 @@ import { newId, splitKey, variantKey } from '@/lib/keys';
 import { formatDateTime, formatMoney, titleCase } from '@/lib/format';
 import { priceHistoryOf } from '@/lib/prices';
 import { validDiscount } from '@/lib/pricing';
+import { validWeight, weightOfKey } from '@/lib/shipping';
 import type { BundleComponent, Item, PriceEntry, Variant } from '@/types';
 import Button from '@/components/ui/Button';
 import { Checkbox, Field, Input, Select, Textarea } from '@/components/ui/Field';
@@ -154,12 +155,18 @@ export default function ItemEditorModal({
           ...v,
           name: v.name.trim(),
           sku: v.sku?.trim() || undefined,
+          weightGrams: validWeight(v.weightGrams),
         })),
       components: isBundle ? draft.components : [],
     };
     if (data.cost === undefined || Number.isNaN(data.cost)) delete data.cost;
     if (data.otsPrice === undefined || Number.isNaN(data.otsPrice)) delete data.otsPrice;
     if (data.priceJpy === undefined || Number.isNaN(data.priceJpy)) delete data.priceJpy;
+    // A cleared weight is stored as 0 ("no weight"): a patch cannot remove a field.
+    const weight = validWeight(data.weightGrams);
+    if (weight) data.weightGrams = weight;
+    else if (existing?.weightGrams) data.weightGrams = 0;
+    else delete data.weightGrams;
 
     let savedItem: Item | null = null;
     const ok = await run(async () => {
@@ -186,6 +193,10 @@ export default function ItemEditorModal({
 
   // Bundle preview split
   const alloc = isBundle ? allocateBundlePrice({ price: draft.price, components: draft.components }, itemsById) : new Map<string, number>();
+  // What the bundle weighs from its components, for the placeholder when it has no weight of its own.
+  const componentGrams = isBundle
+    ? weightOfKey('__draft', new Map([...itemsById, ['__draft', { ...(draft as Item), id: '__draft', kind: 'bundle', weightGrams: undefined }]]))
+    : undefined;
   const listTotal = isBundle ? draft.components.reduce((s, c) => s + c.qty * (itemsById.get(c.itemId)?.price ?? 0), 0) : 0;
 
   const titleText = isNew
@@ -343,6 +354,15 @@ export default function ItemEditorModal({
                 <Input type="number" min={0} value={draft.cost ?? ''} onChange={(e) => up({ cost: e.target.value === '' ? undefined : Number(e.target.value) })} />
               </Field>
 
+              <Field
+                label="Weight (grams)"
+                hint={isBundle
+                  ? (componentGrams ? `For shipping. Blank = components add up to ${componentGrams.toLocaleString('id-ID')} g` : 'For shipping. Blank = add up the components (some have no weight yet)')
+                  : draft.variants.length > 0 ? 'For shipping, one unit without packing. Variants can override it.' : 'For shipping, one unit without packing'}
+              >
+                <Input type="number" min={0} placeholder={isBundle && componentGrams ? `${componentGrams}` : 'No weight yet'} value={validWeight(draft.weightGrams) ?? ''} onChange={(e) => up({ weightGrams: e.target.value === '' ? undefined : Number(e.target.value) })} />
+              </Field>
+
               {!isBundle && (
                 <Field label="Produced at" hint="Where this is made" className="sm:col-span-2">
                   <Input value={draft.producedAt} onChange={(e) => up({ producedAt: e.target.value })} />
@@ -374,6 +394,7 @@ export default function ItemEditorModal({
               variants={draft.variants}
               defaultPrice={draft.price}
               defaultOtsPrice={draft.otsPrice}
+              defaultWeight={validWeight(draft.weightGrams)}
               onChange={(variants) => up({ variants })}
               usedIds={new Set(stock.filter((r) => r.onHand !== 0 || r.committed !== 0).map((r) => r.variantId))}
             />
@@ -614,12 +635,14 @@ function VariantsEditorModalSection({
   variants,
   defaultPrice,
   defaultOtsPrice,
+  defaultWeight,
   onChange,
   usedIds,
 }: {
   variants: Variant[];
   defaultPrice: number;
   defaultOtsPrice?: number;
+  defaultWeight?: number;
   onChange: (v: Variant[]) => void;
   usedIds: Set<string>;
 }) {
@@ -631,7 +654,7 @@ function VariantsEditorModalSection({
       </div>
       <div className="grid gap-2">
         {variants.map((v, idx) => (
-          <div key={v.id} className="grid grid-cols-[auto_minmax(0,1.2fr)_100px_90px_90px_70px_auto_auto] items-center gap-2 p-2 border border-line rounded-md bg-white">
+          <div key={v.id} className="grid grid-cols-[auto_minmax(0,1.2fr)_100px_90px_90px_70px_80px_auto_auto] items-center gap-2 p-2 border border-line rounded-md bg-white">
             <ThumbnailInput
               size="sm"
               value={v.thumbnailId}
@@ -704,6 +727,22 @@ function VariantsEditorModalSection({
                 const val = e.target.value === '' ? undefined : Math.max(0, Math.min(99, Number(e.target.value)));
                 next[idx] = { ...v, discountPercent: val };
                 if (val === undefined) delete next[idx].discountPercent;
+                onChange(next);
+              }}
+            />
+            <Input
+              small
+              type="number"
+              min={0}
+              placeholder={defaultWeight ? `${defaultWeight} g` : 'g'}
+              value={v.weightGrams ?? ''}
+              title="Weight of one unit in grams. Empty = the item's weight."
+              aria-label="Weight in grams"
+              onChange={(e) => {
+                const next = [...variants];
+                const val = e.target.value === '' ? undefined : Math.max(0, Number(e.target.value));
+                next[idx] = { ...v, weightGrams: val };
+                if (val === undefined) delete next[idx].weightGrams;
                 onChange(next);
               }}
             />

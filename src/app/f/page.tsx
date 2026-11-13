@@ -10,6 +10,7 @@ import { clean, COL } from '@/lib/repo';
 import { applyLivePrices, DEFAULT_FORM_LABELS, DEFAULT_THEME } from '@/lib/forms';
 import { QueryPage, useQuery } from '@/lib/useQuery';
 import FormRenderer, { themeStyle, type SubmissionDraft } from '@/components/form/FormRenderer';
+import { useShippingDeps } from '@/lib/customerAuth';
 import type { PublicForm, PublicPrices } from '@/types';
 
 function Message({ title, children }: { title: string; children?: React.ReactNode }) {
@@ -27,6 +28,7 @@ function CustomerForm() {
   // Live prices: a price change in the catalogue shows here within seconds, without a republish.
   // undefined = still loading; null = no list yet, so the published prices stand.
   const [prices, setPrices] = useState<PublicPrices | null | undefined>(undefined);
+  const shipping = useShippingDeps();
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.location.hostname === 'admin.tsuchinoco.xyz') {
@@ -74,7 +76,7 @@ function CustomerForm() {
     });
   };
 
-  return <FormRenderer key={form.version} form={live.form} onSubmit={submit} />;
+  return <FormRenderer key={form.version} form={live.form} onSubmit={submit} shipping={shipping} />;
 }
 
 export default function Page() {

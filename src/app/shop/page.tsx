@@ -9,6 +9,8 @@ import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, db, isFirebaseConfigured, storage } from '@/lib/firebase';
 import { clean, COL } from '@/lib/repo';
 import Shop, { type ContactDraft, type ShopDraft } from '@/components/shop/Shop';
+import { useShippingDeps } from '@/lib/customerAuth';
+import { ORDER_HISTORY_PATH } from '@/lib/customerOrders';
 import type { PublicForm, PublicPrices, StoreCatalog, StoreStatus } from '@/types';
 
 export default function ShopPage() {
@@ -16,6 +18,7 @@ export default function ShopPage() {
   const [status, setStatus] = useState<StoreStatus | null>(null);
   const [prices, setPrices] = useState<PublicPrices | null>(null);
   const [docs, setDocs] = useState<Record<string, PublicForm | null>>({});
+  const shipping = useShippingDeps();
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.location.hostname === 'admin.tsuchinoco.xyz') {
@@ -70,5 +73,5 @@ export default function ShopPage() {
     await setDoc(doc(collection(db, COL.contactSubmissions)), { ...clean(c), status: 'new', submittedAt: Date.now(), createdAt: serverTimestamp() });
   };
 
-  return <Shop catalog={catalog} status={status} docs={docs} prices={prices} onSubmit={submit} onContact={contact} />;
+  return <Shop catalog={catalog} status={status} docs={docs} prices={prices} onSubmit={submit} onContact={contact} shipping={shipping} ordersHref={ORDER_HISTORY_PATH} />;
 }

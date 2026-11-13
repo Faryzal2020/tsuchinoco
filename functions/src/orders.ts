@@ -11,7 +11,9 @@ import { FieldValue, type Transaction } from 'firebase-admin/firestore';
 import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions';
-import { buildImportedOrder, importTarget, itemIdsOf, newMonthBatch } from '../../src/lib/importCore';
+import { buildImportedOrder, importTarget, itemIdsOf, newMonthBatch, submissionTime } from '../../src/lib/importCore';
+import { shippingForSubmission } from './shipping';
+import { ensureCustomerToken } from './customerOrders';
 import { transactionId } from '../../src/lib/forms';
 import { emailRef, emailsDue, NOTIFICATION_TYPES, notificationsOf, orderEmailVars, renderEmail, templateFor } from '../../src/lib/orderEmail';
 import { adminAddress, automatedAddress, formatFrom, htmlToText, mailSettingsOf, PRIORITY } from '../../src/lib/mail';
@@ -39,6 +41,9 @@ export const importSubmissionOnCreate = onDocumentCreated({ document: 'submissio
   const first = ev.data?.data() as Omit<Submission, 'id'> | undefined;
   if (!first || first.status !== 'new') return;
   const [settings, itemsById] = await Promise.all([getSettings(), loadItems(itemIdsOf(first.lines))]);
+  // Shipping is settled before the transaction: re-pricing may call Biteship. The submission's
+  // lines and address never change after it is written, only its status.
+  const shipping = await shippingForSubmission({ id, ...first } as Submission, settings, submissionTime(first));
   const subRef = db().doc(`submissions/${id}`);
 
   let result = 'skipped' as 'imported' | 'rejected' | 'skipped';
@@ -76,7 +81,7 @@ export const importSubmissionOnCreate = onDocumentCreated({ document: 'submissio
     const counter = await tx.get(counterRef);
 
     const now = Date.now();
-    const probe = buildImportedOrder({ sub, batch, event, itemsById, live: live ?? null, settings, transactionId: '', now, by: SYSTEM });
+    const probe = buildImportedOrder({ sub, batch, event, itemsById, live: live ?? null, settings, transactionId: '', now, by: SYSTEM, shipping });
     if ('reject' in probe) {
       reason = probe.reject;
       tx.update(subRef, { status: 'rejected', rejectReason: reason });
@@ -105,6 +110,8 @@ async function queueOrderEmail(order: Order, type: NotificationType, settings: S
   if (!to) return { ...base, error: 'No e-mail address on the order.' };
   if (!resendKey(settings)) return { ...base, error: 'E-mail is not set up: add the Resend key in Mail settings on the Emails page.' };
   try {
+    // The e-mail links to the customer's order page, so the order needs its token first.
+    if (!order.customerToken) order = { ...order, customerToken: await ensureCustomerToken(order.id) };
     const [eventSnap, batchSnap, itemsById] = await Promise.all([
       db().doc(`events/${order.eventId}`).get(), db().doc(`batches/${order.batchId}`).get(), loadItems(order.rawLines.map((l) => l.itemId)),
     ]);

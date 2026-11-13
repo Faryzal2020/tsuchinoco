@@ -16,7 +16,7 @@ import type { Order, OrderStatus, OrderType } from '@/types';
 import { useAuth } from '@/lib/auth';
 import { orderRepo } from '@/lib/repo';
 import { eventCode } from '@/lib/forms';
-import { groupKeyOf, holdOf, isUnfulfilled, ORDER_STATUS_LABELS, orderTypeOf, paymentOf } from '@/lib/orders';
+import { groupKeyOf, holdOf, isUnfulfilled, ORDER_STATUS_LABELS, orderTypeOf, paymentOf, shipFromOf } from '@/lib/orders';
 import { OrderStagePill, OrderTypeCell } from '@/components/orders/OrderBits';
 import Button from '@/components/ui/Button';
 import { Checkbox, Input, Select } from '@/components/ui/Field';
@@ -31,13 +31,15 @@ const QUICK = [
   { id: 'receipt', label: 'Receipt to check' },
   { id: 'tosend', label: 'Paid, to send' },
   { id: 'unpaidclosed', label: 'Unpaid after close' },
-  { id: 'flagged', label: 'Price changed' },
+  { id: 'flagged', label: 'Price or shipping to check' },
 ] as const;
 
 interface Row {
   o: Order;
   type: OrderType;
   group: string;
+  /** Earliest shipping day (YYYY-MM-DD) of a shipped order, when known. */
+  shipFrom?: string;
   held: boolean;
   paid: boolean;
 }
@@ -75,7 +77,7 @@ function OrdersPage() {
   const enrich = (o: Order): Row => {
     const b = batchById.get(o.batchId);
     const type = orderTypeOf(o, b, eventById.get(o.eventId));
-    return { o, type, group: groupKeyOf(o, type), held: !!holdOf(o, type, events), paid: paymentOf(o) === 'paid' };
+    return { o, type, group: groupKeyOf(o, type), held: !!holdOf(o, type, events), paid: paymentOf(o) === 'paid', shipFrom: shipFromOf(o, type, eventById.get(o.eventId), events)?.date ?? undefined };
   };
   const unfulfilled = useMemo(() => openOrders.map(enrich), [openOrders, batchById, eventById, events]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -106,7 +108,7 @@ function OrdersPage() {
     if (quick === 'receipt' && (r.paid || !o.paymentProofUrl)) return false;
     if (quick === 'tosend' && (!r.paid || r.held || !isUnfulfilled(o) || (o.fulfilment !== 'mail' && o.status !== 'not_collected'))) return false;
     if (quick === 'unpaidclosed' && (r.paid || r.type !== 'preorder' || !['closed', 'fulfilled'].includes(batchById.get(o.batchId)?.status ?? ''))) return false;
-    if (quick === 'flagged' && !o.priceFlag) return false;
+    if (quick === 'flagged' && !o.priceFlag && !o.shippingFlag) return false;
     if (search) {
       const s = search.toLowerCase();
       const hay = [o.customer.name, o.customer.email, o.customer.phone, o.transactionId ?? '', o.tracking?.number ?? ''].join(' ').toLowerCase();
@@ -115,8 +117,10 @@ function OrdersPage() {
     return true;
   }).sort((a, b) => view === 'all'
     ? b.o.submittedAt - a.o.submittedAt
-    // Unfulfilled: price flags first, then preorders before mail orders, oldest first.
-    : (a.o.priceFlag ? 0 : 1) - (b.o.priceFlag ? 0 : 1) || (a.type === b.type ? 0 : a.type === 'preorder' ? -1 : 1) || a.o.submittedAt - b.o.submittedAt);
+    // Unfulfilled: price and shipping flags first, then preorders before mail orders, then the
+    // earliest shipping day (orders without one last), oldest first.
+    : (a.o.priceFlag || a.o.shippingFlag ? 0 : 1) - (b.o.priceFlag || b.o.shippingFlag ? 0 : 1) || (a.type === b.type ? 0 : a.type === 'preorder' ? -1 : 1)
+      || (a.shipFrom ?? '9').localeCompare(b.shipFrom ?? '9') || a.o.submittedAt - b.o.submittedAt);
 
   // An order that leaves the list (picked up, delivered, cancelled in Unfulfilled) closes its modal
   // rather than showing a stale copy; it stays reachable under All orders.
@@ -133,7 +137,9 @@ function OrdersPage() {
   const exportCsv = () => downloadCsv('orders', toCsv(rows.map(({ o, type }) => ({
     id: o.transactionId ?? '', submitted: formatDateTime(o.submittedAt), type: type === 'preorder' ? 'Preorder' : 'Mail order', event: eventById.get(o.eventId)?.name ?? '', batch: batchById.get(o.batchId)?.number ?? '',
     name: o.customer.name, email: o.customer.email, phone: o.customer.phone, fulfilment: o.fulfilment, pickupDay: o.pickupDay ?? '', payment: paymentOf(o), status: ORDER_STATUS_LABELS[o.status],
-    courier: o.tracking?.courier ?? '', tracking: o.tracking?.number ?? '', items: orderItemCount(o), total: o.total, address: o.customer.address ?? '', notes: o.notes,
+    courier: o.tracking?.courier ?? '', tracking: o.tracking?.number ?? '', items: orderItemCount(o), total: o.total,
+    shipping: o.shipping ? `${o.shipping.name} ${o.shipping.fee} + ${o.shipping.handlingFee + o.shipping.packagingFee} fees` : '', postcode: o.shipping?.postalCode ?? '',
+    address: o.customer.address ?? '', notes: o.notes,
   }))));
 
   const setView = (v: string) => { setSelected(new Set()); set({ view: v || null, quick: null }); };
@@ -240,6 +246,7 @@ function OrdersPage() {
                   <OrderStagePill order={o} />
                   {o.status === 'not_collected' && isPastIso(o.returnToStockBy) && <Pill tone="red" className="ml-1">Overdue</Pill>}
                   {o.priceFlag && <span className="hint block text-yellow-ink">Price changed</span>}
+                  {o.shippingFlag && <span className="hint block text-yellow-ink">Check shipping</span>}
                   {!o.priceFlag && paymentOf(o) === 'unpaid' && o.paymentProofUrl && isUnfulfilled(o) && <span className="hint block">Receipt uploaded</span>}
                   {o.tracking && <span className="hint block mono">{o.tracking.courier} {o.tracking.number}</span>}
                 </td>

@@ -16,6 +16,8 @@ export interface Variant {
   discountPercent?: number;
   /** media id; overrides the item thumbnail on forms */
   thumbnailId?: string;
+  /** Shipping weight of one unit in grams; overrides the item's weight. */
+  weightGrams?: number;
 }
 
 export interface BundleComponent {
@@ -45,6 +47,8 @@ export interface Item {
   discountPercent?: number;
   /** False hides the item from mail order. Absent means sellable by mail order. */
   mailOrder?: boolean;
+  /** Shipping weight of one unit in grams, without packing. Bundles absent here add up their components. */
+  weightGrams?: number;
   cost?: number;
   producedAt: string;
   active: boolean;
@@ -222,6 +226,14 @@ export interface Order {
   holdReleased?: boolean;
   /** Set by the importer when the price charged differs from the one the customer saw. */
   priceFlag?: string;
+  /** What a shipped order was charged for shipping; part of `total`. */
+  shipping?: OrderShipping;
+  /** Set when shipping could not be charged as quoted, or an item had no weight. Staff clear it once checked. */
+  shippingFlag?: string;
+  /** The customer's Google account, for shipped orders (their order page lists these). */
+  customerUid?: string;
+  /** Secret id of the customer's copy, customerOrders/{customerToken}; the order page link carries it. Set by the server. */
+  customerToken?: string;
   /** Order-update e-mails sent (or attempted) for this order, oldest first. */
   emails?: OrderEmail[];
   /** Written with a status change to skip that change's automatic e-mail once. Cleared by the function. */
@@ -353,6 +365,9 @@ export interface FormSettings {
   requireEmail: boolean;
   thankYouMessage: string;
   closedMessage: string;
+  /** Added to shipped orders. Absent means the storefront's shipping settings; on a published form always resolved. */
+  handlingFee?: number;
+  packagingFee?: number;
 }
 
 /** Editable form definition. One per batch; the id is the batch id. */
@@ -430,7 +445,7 @@ export interface PublicForm {
   currency: string;
   blocks: PublicBlock[];
   /** Every orderable key with the data the import and the rules need. */
-  items: Record<string, { name: string; variantName: string; price: number; kind: ItemKind }>;
+  items: Record<string, { name: string; variantName: string; price: number; kind: ItemKind; /** Grams per unit, absent when the catalogue has none. */ weight?: number }>;
   maxQtyPerLine: number;
   /** Accepting window in ms since epoch, from the batch dates. The rules check them against server time. */
   acceptFrom?: number;
@@ -461,6 +476,11 @@ export interface Submission {
   /** Price entry id the customer saw per line key. */
   seen?: Record<string, string>;
   paymentMethod?: string;
+  /** Shipped orders: the destination postcode, the quote from quoteShipping and the chosen service. */
+  postalCode?: string;
+  shipping?: { quoteId: string; service: string };
+  /** Shipped orders: the Google account that placed it (the rules require it to be the writer). */
+  customerUid?: string;
   /** Server time of the write, enforced by the rules. A Firestore Timestamp when read. */
   createdAt?: unknown;
   submittedAt: number;
@@ -722,10 +742,120 @@ export type StoreBlock =
 /** Where a block sits: under the header, between the highlights and the main list, or after everything. */
 export type StoreBlockPosition = 'top' | 'middle' | 'bottom';
 
+/** Where parcels ship from and the fees a shipped order pays on top of the courier price. */
+export interface ShippingSettings {
+  /** Five-digit postcode parcels ship from. */
+  originPostalCode: string;
+  handlingFee: number;
+  packagingFee: number;
+}
+
+export const DEFAULT_SHIPPING: ShippingSettings = { originPostalCode: '16920', handlingFee: 10000, packagingFee: 5000 };
+
+/** One courier service and its price for a parcel, as the quote shows it. */
+export interface ShippingOption {
+  courier: string;
+  /** Biteship service code, e.g. reg_pack. */
+  service: string;
+  /** Customer-facing name, e.g. "Lion REGPACK". */
+  name: string;
+  price: number;
+  /** Delivery estimate as Biteship gives it, e.g. "2 - 3 days". */
+  etd: string;
+}
+
+/**
+ * shippingQuotes/{id}: what the server priced for one cart and postcode, written by quoteShipping.
+ * The checkout sends the id; the import charges what is stored here. Server-only.
+ */
+export interface ShippingQuote {
+  uid: string;
+  formId: string;
+  postalCode: string;
+  originPostalCode: string;
+  lines: Record<string, number>;
+  /** Parcel weight with packing; units without a weight count as 100 g. */
+  grams: number;
+  billedKg: number;
+  /** Item names without a weight; the order gets flagged. */
+  unweighed: string[];
+  options: ShippingOption[];
+  handlingFee: number;
+  packagingFee: number;
+  createdAt: number;
+  expiresAt: number;
+}
+
+/** The shipping charged on an order. Fees are copied in, so later settings changes do not move them. */
+export interface OrderShipping {
+  courier: string;
+  service: string;
+  /** e.g. "Lion REGPACK" */
+  name: string;
+  fee: number;
+  handlingFee: number;
+  packagingFee: number;
+  grams: number;
+  billedKg: number;
+  postalCode: string;
+  quoteId?: string;
+  quotedAt: number;
+  /** Priced again by the server at import because the checkout's quote no longer fitted. */
+  requoted?: boolean;
+  /** Why staff changed a fee. */
+  note?: string;
+}
+
+/** Where an order stands, as the customer sees it. */
+export type CustomerStage = 'unpaid' | 'paid' | 'shipped' | 'collected' | 'not_collected' | 'cancelled';
+
+/**
+ * customerOrders/{token}: the customer's read-only copy of an order, written by the server on
+ * every change. Anyone with the token can read it, so it holds no address, phone or e-mail.
+ * Signed-in customers list theirs by `uid`.
+ */
+export interface CustomerOrder {
+  uid?: string;
+  orderNumber: string;
+  submittedAt: number;
+  orderType: OrderType;
+  /** e.g. "Preorder · Comic Frontier 24" or "Mail order" */
+  title: string;
+  fulfilment: Fulfilment;
+  pickupDay?: string;
+  stage: CustomerStage;
+  paidAt?: number;
+  shippedAt?: number;
+  collectedAt?: number;
+  cancelledAt?: number;
+  lines: { label: string; qty: number; lineTotal: number }[];
+  itemsTotal: number;
+  shipping?: { name: string; fee: number; handlingFee: number; packagingFee: number; billedKg: number };
+  total: number;
+  currency: string;
+  tracking?: { courier: string; number: string; url?: string };
+  updatedAt: number;
+}
+
+/** What quoteShipping returns to the checkout. */
+export interface ShippingQuoteResult {
+  quoteId: string;
+  postalCode: string;
+  grams: number;
+  billedKg: number;
+  unweighed: string[];
+  options: ShippingOption[];
+  handlingFee: number;
+  packagingFee: number;
+  expiresAt: number;
+}
+
 export interface StorefrontSettings {
   priceBasis: Record<OrderType, 'po' | 'ots'>;
   graceMinutes: number;
   couriers: Courier[];
+  /** Absent means DEFAULT_SHIPPING. Form settings can override the two fees per form. */
+  shipping?: ShippingSettings;
   /** Shown at the top of the storefront. */
   shopTitle?: string;
   shopIntro?: string;

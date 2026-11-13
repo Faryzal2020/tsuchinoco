@@ -13,6 +13,8 @@ const LINKS = [
   { href: '/sandbox/orders/', label: 'Orders' },
   { href: '/sandbox/storefront/', label: 'Storefront (staff)' },
   { href: '/sandbox/shop/', label: 'Shop (customer)' },
+  { href: '/sandbox/form/', label: 'Form (customer)' },
+  { href: '/sandbox/my-orders/', label: 'My orders (customer)' },
   { href: '/sandbox/settings/', label: 'Order e-mails' },
   { href: '/sandbox/offering/', label: 'Batch offering' },
   { href: '/sandbox/emails/', label: 'Emails' },
@@ -29,7 +31,7 @@ export default function SandboxLayout({ children }: { children: React.ReactNode 
 function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { reset } = useSandbox();
-  const isShop = pathname.startsWith('/sandbox/shop');
+  const isShop = pathname.startsWith('/sandbox/shop') || pathname.startsWith('/sandbox/my-orders');
   return (
     <>
       <header className="no-print sticky top-0 z-40 border-b border-line bg-yellow-soft">

@@ -12,6 +12,7 @@ import { DEFAULT_STORE_THEME } from '@/types';
 import { storePrice, storeState, type StoreChoice, type StorePrice } from '@/lib/store';
 import { confirmationCode } from '@/lib/forms';
 import { formatMoney, titleCase } from '@/lib/format';
+import { shipRule, useShippingQuote, type ShippingDeps, type ShippingQuoteHook } from '@/lib/shippingQuote';
 import './shop.css';
 
 export type ShopDraft = Omit<Submission, 'id'>;
@@ -30,6 +31,10 @@ export interface ShopProps {
   now?: number;
   /** Shown above the page, e.g. the sandbox notice. */
   notice?: React.ReactNode;
+  /** Google sign-in and shipping quotes. Without it (the staff preview) shipped orders cannot be placed. */
+  shipping?: ShippingDeps;
+  /** The customer's order history page; adds a "My orders" link. */
+  ordersHref?: string;
   /** Staff preview inside the admin app: nothing is remembered in the browser and the page is not full height. */
   preview?: boolean;
 }
@@ -73,7 +78,7 @@ export function shopStyle(theme: StoreCatalog['theme']): React.CSSProperties {
 
 interface Priced { variant: StoreVariant; product: StoreProduct; price: StorePrice; orderable: boolean }
 
-export default function Shop({ catalog, status, docs, prices, onSubmit, onContact, now, notice, preview }: ShopProps) {
+export default function Shop({ catalog, status, docs, prices, onSubmit, onContact, now, notice, preview, shipping, ordersHref }: ShopProps) {
   const [clock, setClock] = useState(() => now ?? Date.now());
   useEffect(() => { if (now !== undefined) { setClock(now); return; } const t = setInterval(() => setClock(Date.now()), 60_000); return () => clearInterval(t); }, [now]);
   const state = useMemo(() => storeState(catalog, status, docs, clock), [catalog, status, docs, clock]);
@@ -165,7 +170,7 @@ export default function Shop({ catalog, status, docs, prices, onSubmit, onContac
   const count = okLines.reduce((s, l) => s + l.qty, 0);
   const total = okLines.reduce((s, l) => s + l.qty * l.p!.price.unitPrice, 0);
   const [open, setOpen] = useState(false);
-  const [done, setDone] = useState<{ code: string; lines: typeof okLines; total: number; label: string } | null>(null);
+  const [done, setDone] = useState<{ code: string; lines: typeof okLines; total: number; label: string; extras: [string, number][] } | null>(null);
   const [contactOpen, setContactOpen] = useState(false);
   const theme = { ...DEFAULT_STORE_THEME, ...(catalog.theme ?? {}) };
 
@@ -177,6 +182,7 @@ export default function Shop({ catalog, status, docs, prices, onSubmit, onContac
           <h1 className="shop-title">{catalog.title || 'Shop'}</h1>
           {catalog.intro && <p className="shop-intro">{catalog.intro}</p>}
           {onContact && !contactOpen && <p className="shop-intro"><button type="button" className="shop-link" onClick={() => setContactOpen(true)}>Contact us</button> with a question about an item or your order.</p>}
+          {ordersHref && <p className="shop-intro"><a className="shop-nav-link" href={ordersHref}>My orders</a></p>}
         </div>
         {!done && <OrderTypeBanner state={state} choice={choice} onPick={pickLane} />}
       </header>
@@ -184,7 +190,7 @@ export default function Shop({ catalog, status, docs, prices, onSubmit, onContac
       {onContact && contactOpen && <ContactForm onSend={onContact} onClose={() => setContactOpen(false)} />}
 
       {done ? (
-        <ThankYou done={done} currency={catalog.currency} onBack={() => setDone(null)} />
+        <ThankYou done={done} currency={catalog.currency} onBack={() => setDone(null)} ordersHref={ordersHref} />
       ) : (
         <>
           {blocksAt('top')}
@@ -251,9 +257,10 @@ export default function Shop({ catalog, status, docs, prices, onSubmit, onContac
               catalog={catalog} choice={choice} okLines={okLines} badLines={badLines} total={total} max={maxQty}
               setQty={setQty} removeBad={() => { const n = { ...cart }; for (const l of badLines) delete n[l.key]; saveCart(n); }}
               onClose={() => setOpen(false)}
-              onSubmit={async (draft, proof) => {
+              deps={shipping}
+              onSubmit={async (draft, proof, grandTotal, extras) => {
                 await onSubmit(choice, draft, proof);
-                setDone({ code: draft.code, lines: okLines, total, label: choice.label });
+                setDone({ code: draft.code, lines: okLines, total: grandTotal, label: choice.label, extras });
                 saveCart({});
                 setOpen(false);
                 window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -435,9 +442,10 @@ function Stepper({ value, max, onChange, label }: { value: number; max: number; 
 
 interface Line { key: string; qty: number; p?: Priced }
 
-function Checkout({ catalog, choice, okLines, badLines, total, max, setQty, removeBad, onClose, onSubmit }: {
+function Checkout({ catalog, choice, okLines, badLines, total, max, setQty, removeBad, onClose, onSubmit, deps }: {
   catalog: StoreCatalog; choice: StoreChoice; okLines: Line[]; badLines: Line[]; total: number; max: number;
-  setQty: (k: string, q: number) => void; removeBad: () => void; onClose: () => void; onSubmit: (d: ShopDraft, proof?: File) => Promise<void>;
+  setQty: (k: string, q: number) => void; removeBad: () => void; onClose: () => void; onSubmit: (d: ShopDraft, proof: File | undefined, grandTotal: number, extras: [string, number][]) => Promise<void>;
+  deps?: ShippingDeps;
 }) {
   const isPre = choice.lane.kind === 'preorder';
   const days = choice.lane.pickupDays;
@@ -449,6 +457,13 @@ function Checkout({ catalog, choice, okLines, badLines, total, max, setQty, remo
   const [err, setErr] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
   const fulfilment = isPre ? ful : 'mail';
+  const cartLines = useMemo(() => Object.fromEntries(okLines.map((l) => [l.key, l.qty])), [okLines]);
+  const q = useShippingQuote({
+    deps, form: choice.doc, lines: cartLines, active: fulfilment === 'mail' && okLines.length > 0,
+    onSignedIn: (u) => setC((x) => ({ ...x, name: x.name || u.name, email: x.email || u.email })),
+  });
+  const shipped = fulfilment === 'mail';
+  const grandTotal = total + (shipped ? q.extra : 0);
   const top = useRef<HTMLElement>(null);
   useEffect(() => { top.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, []);
 
@@ -460,6 +475,10 @@ function Checkout({ catalog, choice, okLines, badLines, total, max, setQty, remo
     if (!c.phone.trim()) e.phone = 'Required';
     if (fulfilment === 'pickup' && days.length > 0 && !day) e.day = 'Choose a day';
     if (fulfilment === 'mail' && !c.address.trim()) e.address = 'Required for shipping';
+    if (shipped) {
+      const why = shippingProblem(q, !!deps);
+      if (why) e.ship = why;
+    }
     if (okLines.length === 0) e.lines = 'Your cart is empty.';
     if (badLines.length > 0) e.lines = 'Remove the unavailable items first.';
     setErr(e);
@@ -469,12 +488,17 @@ function Checkout({ catalog, choice, okLines, badLines, total, max, setQty, remo
     const draft: ShopDraft = {
       formId: choice.doc.formId, eventId: choice.doc.eventId, batchId: choice.doc.batchId, version: choice.doc.version, code: confirmationCode(),
       customer: { name: c.name.trim(), email: c.email.trim(), phone: c.phone.trim(), ...(fulfilment === 'mail' ? { address: c.address.trim() } : {}) },
+      ...(shipped && q.result && q.option ? { postalCode: q.result.postalCode, shipping: { quoteId: q.result.quoteId, service: q.option.service }, customerUid: deps?.customer?.uid } : {}),
       fulfilment, ...(fulfilment === 'pickup' && day ? { pickupDay: day } : {}),
       notes: c.notes.trim(), lines: Object.fromEntries(okLines.map((l) => [l.key, l.qty])), submittedAt: Date.now(), status: 'new',
       orderType: choice.lane.kind, seen, ...(pay ? { paymentMethod: pay } : {}),
     };
     setSending(true);
-    try { await onSubmit(draft, proof ?? undefined); }
+    // Shipping lines for the thank-you page, in the order the checkout showed them.
+    const extras: [string, number][] = shipped && q.option && q.result
+      ? ([[`Shipping · ${q.option.name} · ${q.result.billedKg} kg`, q.option.price], ['Handling', q.result.handlingFee], ['Packaging', q.result.packagingFee]] as [string, number][]).filter(([, v]) => v > 0)
+      : [];
+    try { await onSubmit(draft, proof ?? undefined, grandTotal, extras); }
     catch (x) { console.error(x); setErr({ submit: 'Could not send your order. Check your connection and try again.' }); }
     finally { setSending(false); }
   };
@@ -503,7 +527,15 @@ function Checkout({ catalog, choice, okLines, badLines, total, max, setQty, remo
         ))}
       </ul>
       {badLines.length > 0 && <button type="button" className="shop-btn" onClick={removeBad}>Remove unavailable items</button>}
-      <div className="shop-total"><span>Total</span><span className="shop-money">{formatMoney(total, catalog.currency)}</span></div>
+      {shipped && q.option && q.result ? (
+        <div className="shop-breakdown">
+          <div><span>Items</span><span className="shop-money">{formatMoney(total, catalog.currency)}</span></div>
+          <div><span>Shipping · {q.option.name} · {q.result.billedKg} kg</span><span className="shop-money">{formatMoney(q.option.price, catalog.currency)}</span></div>
+          {q.result.handlingFee > 0 && <div><span>Handling</span><span className="shop-money">{formatMoney(q.result.handlingFee, catalog.currency)}</span></div>}
+          {q.result.packagingFee > 0 && <div><span>Packaging</span><span className="shop-money">{formatMoney(q.result.packagingFee, catalog.currency)}</span></div>}
+        </div>
+      ) : shipped ? <p className="shop-hint">Shipping is added once you enter your postcode below.</p> : null}
+      <div className="shop-total"><span>Total</span><span className="shop-money">{formatMoney(grandTotal, catalog.currency)}</span></div>
       {err.lines && <p className="shop-error">{err.lines}</p>}
 
       <form onSubmit={submit} noValidate className="shop-form">
@@ -519,7 +551,7 @@ function Checkout({ catalog, choice, okLines, badLines, total, max, setQty, remo
           {isPre && (
             <div className="shop-radios">
               <label className={`shop-option ${ful === 'pickup' ? 'is-on' : ''}`}><input type="radio" name="ful" checked={ful === 'pickup'} onChange={() => setFul('pickup')} /><b>Pick up at the booth</b><span>At {choice.lane.eventName}</span></label>
-              <label className={`shop-option ${ful === 'mail' ? 'is-on' : ''}`}><input type="radio" name="ful" checked={ful === 'mail'} onChange={() => setFul('mail')} /><b>Ship after the event</b><span>Shipping is arranged after the event ends</span></label>
+              <label className={`shop-option ${ful === 'mail' ? 'is-on' : ''}`}><input type="radio" name="ful" checked={ful === 'mail'} onChange={() => setFul('mail')} /><b>Ship after the event</b><span>Pay shipping now; it is sent after the event ends</span></label>
             </div>
           )}
           {fulfilment === 'pickup' && days.length > 0 && (
@@ -532,13 +564,15 @@ function Checkout({ catalog, choice, okLines, badLines, total, max, setQty, remo
               {err.day && <span className="shop-error">{err.day}</span>}
             </div>
           )}
-          {fulfilment === 'mail' && (
+          {fulfilment === 'mail' && <ShopShipping q={q} live={!!deps} currency={catalog.currency} error={err.ship} />}
+          {fulfilment === 'mail' && (q.state !== 'signin' || !deps) && (
             <div className="shop-field">
               <label htmlFor="shop-address">Shipping address</label>
-              <textarea id="shop-address" rows={3} value={c.address} onChange={(e) => setC({ ...c, address: e.target.value })} aria-invalid={!!err.address} placeholder="Street, subdistrict, city, province, postal code" />
+              <textarea id="shop-address" rows={3} value={c.address} onChange={(e) => setC({ ...c, address: e.target.value })} aria-invalid={!!err.address} placeholder="Street and number, RT/RW, kelurahan, kecamatan, city" autoComplete="street-address" />
               {err.address && <span className="shop-error">{err.address}</span>}
             </div>
           )}
+          {fulfilment === 'mail' && <p className="shop-hint">{shipRule(choice.lane.kind)}</p>}
           {!isPre && <p className="shop-hint">Mail orders ship after current events end. Some items may still be in production; we will tell you if yours is.</p>}
         </fieldset>
 
@@ -565,7 +599,7 @@ function Checkout({ catalog, choice, okLines, badLines, total, max, setQty, remo
         <div className="shop-honeypot" aria-hidden="true"><label>Website <input tabIndex={-1} autoComplete="off" value={c.website} onChange={(e) => setC({ ...c, website: e.target.value })} /></label></div>
         {err.submit && <p className="shop-error">{err.submit}</p>}
         <button type="submit" className="shop-btn shop-btn-primary shop-btn-wide" disabled={sending || okLines.length === 0}>
-          {sending ? 'Sending…' : `Place ${isPre ? 'preorder' : 'mail order'} · ${formatMoney(total, catalog.currency)}`}
+          {sending ? 'Sending…' : `Place ${isPre ? 'preorder' : 'mail order'} · ${formatMoney(grandTotal, catalog.currency)}`}
         </button>
       </form>
     </section>
@@ -639,6 +673,56 @@ function ContactForm({ onSend, onClose }: { onSend: (c: ContactDraft) => Promise
   );
 }
 
+/** Why a shipped order cannot be placed yet, or '' when the shipping is ready. */
+function shippingProblem(q: ShippingQuoteHook, live: boolean): string {
+  if (!live) return 'Shipping prices only work on the live shop.';
+  switch (q.state) {
+    case 'signin': return 'Sign in with Google to have your order shipped.';
+    case 'postcode': return 'Enter your five-digit postcode.';
+    case 'loading': return 'Wait a moment for the shipping price.';
+    case 'none': return 'Lion Parcel does not deliver to this postcode.';
+    case 'error': return q.error || 'Could not get shipping prices.';
+    default: return q.option ? '' : 'Choose a shipping service.';
+  }
+}
+
+/** Google sign-in, postcode and the Lion services for a shipped order. */
+function ShopShipping({ q, live, currency, error }: { q: ShippingQuoteHook; live: boolean; currency: string; error?: string }) {
+  if (!live) return <p className="shop-hint">Customers sign in with Google here and get Lion Parcel prices for their postcode. The preview cannot fetch prices.</p>;
+  if (q.state === 'signin') {
+    return (
+      <div className="shop-signin">
+        <p><b>Sign in with Google to ship this order.</b> You can follow it later from your order page. Picking up at the booth needs no sign-in.</p>
+        <button type="button" className="shop-btn" onClick={q.signIn} disabled={q.signingIn}>{q.signingIn ? 'Signing in…' : 'Sign in with Google'}</button>
+        {(q.error || error) && <span className="shop-error">{q.error || error}</span>}
+      </div>
+    );
+  }
+  return (
+    <div className="shop-shipping">
+      <div className="shop-field shop-postcode">
+        <label htmlFor="shop-postcode">Postcode</label>
+        <input id="shop-postcode" inputMode="numeric" autoComplete="postal-code" maxLength={5} placeholder="e.g. 16920" value={q.postal} onChange={(e) => q.setPostal(e.target.value)} aria-invalid={q.state === 'postcode' && !!error} />
+      </div>
+      {q.state === 'loading' && <p className="shop-hint" aria-live="polite">Checking Lion Parcel prices…</p>}
+      {q.state === 'none' && <p className="shop-error">Lion Parcel does not deliver to this postcode. Check it, or contact us.</p>}
+      {q.state === 'error' && <p className="shop-error">{q.error} <button type="button" className="shop-link" onClick={q.retry}>Try again</button></p>}
+      {q.state === 'ready' && q.result && (
+        <div className="shop-radios" role="radiogroup" aria-label="Shipping service">
+          {q.result.options.map((o) => (
+            <label key={o.service} className={`shop-option ${q.option?.service === o.service ? 'is-on' : ''}`}>
+              <input type="radio" name="ship" checked={q.option?.service === o.service} onChange={() => q.setService(o.service)} />
+              <b>{o.name} · <span className="shop-money">{formatMoney(o.price, currency)}</span></b>
+              <span>{o.etd ? `${o.etd} after it ships` : 'Delivery time varies'} · charged as {q.result!.billedKg} kg</span>
+            </label>
+          ))}
+        </div>
+      )}
+      {error && q.state !== 'loading' && q.state !== 'none' && q.state !== 'error' && <span className="shop-error">{error}</span>}
+    </div>
+  );
+}
+
 function Text({ id, label, value, onChange, error, type = 'text', autoComplete }: { id: string; label: string; value: string; onChange: (v: string) => void; error?: string; type?: string; autoComplete?: string }) {
   return (
     <div className="shop-field">
@@ -649,7 +733,7 @@ function Text({ id, label, value, onChange, error, type = 'text', autoComplete }
   );
 }
 
-function ThankYou({ done, currency, onBack }: { done: { code: string; lines: Line[]; total: number; label: string }; currency: string; onBack: () => void }) {
+function ThankYou({ done, currency, onBack, ordersHref }: { done: { code: string; lines: Line[]; total: number; label: string; extras: [string, number][] }; currency: string; onBack: () => void; ordersHref?: string }) {
   return (
     <section className="shop-thanks">
       <h2>Order received</h2>
@@ -660,7 +744,14 @@ function ThankYou({ done, currency, onBack }: { done: { code: string; lines: Lin
       <ul className="shop-lines">
         {done.lines.map((l) => <li key={l.key}><div><b>{l.p!.product.name}</b>{l.p!.variant.name && <span className="shop-line-variant"> · {l.p!.variant.name}</span>}</div><span>{l.qty} ×</span><span className="shop-money shop-line-total">{formatMoney(l.qty * l.p!.price.unitPrice, currency)}</span></li>)}
       </ul>
+      {done.extras.length > 0 && (
+        <div className="shop-breakdown">
+          {done.extras.map(([label, v]) => <div key={label}><span>{label}</span><span className="shop-money">{formatMoney(v, currency)}</span></div>)}
+        </div>
+      )}
       <div className="shop-total"><span>Total</span><span className="shop-money">{formatMoney(done.total, currency)}</span></div>
+      {done.extras.length > 0 && ordersHref && <p className="shop-hint">You can follow this order any time under <a className="shop-nav-link" href={ordersHref}>My orders</a>, signed in with the same Google account. We also e-mail you a link once your payment is confirmed.</p>}
+      {done.extras.length === 0 && <p className="shop-hint">We e-mail you a link to follow this order once your payment is confirmed.</p>}
       <button type="button" className="shop-btn" onClick={onBack}>Back to the shop</button>
     </section>
   );

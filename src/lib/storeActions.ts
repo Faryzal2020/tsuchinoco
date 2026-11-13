@@ -7,6 +7,7 @@ import { db } from './firebase';
 import { COL, clean, eventRepo, logActivity } from './repo';
 import { fetchManyMedia } from './media';
 import { storefrontOf } from './pricing';
+import { unweighedLabels } from './shipping';
 import { buildStorefront, endOfToday, laneIdFor, MAIL_LANE_ID, mediaIdsForProducts, overrideActive, STORE_EVENT_CODE, storeHashFor } from './store';
 import type { Batch, Event, FormDoc, Item, Settings, Staff, StoreCatalog, StoreStatus } from '@/types';
 
@@ -44,7 +45,7 @@ export const storeRepo = {
     return { id, ...data, createdAt: Date.now(), updatedAt: Date.now(), updatedBy: by };
   },
 
-  publish: async (input: PublishInput): Promise<{ lanes: number; products: number }> => {
+  publish: async (input: PublishInput): Promise<{ lanes: number; products: number; unweighed: string[] }> => {
     const storeEvent = await storeRepo.ensureStoreEvent(input.events, input.settings, input.by);
     const media = await fetchManyMedia(mediaIdsForProducts(input.items, storefrontOf(input.settings)));
     const build = buildStorefront({ ...input, media, storeEvent });
@@ -63,7 +64,8 @@ export const storeRepo = {
     if (!input.status) b.set(statusRef(), { mailOrderOpen: false, updatedAt: Date.now() });
     await b.commit();
     await logActivity('publish', 'form', `Published the storefront (${catalog.products.length} products, ${build.lanes.length - 1} preorder lanes)`, input.by);
-    return { lanes: build.lanes.length - 1, products: catalog.products.length };
+    const unweighed = [...new Set(build.lanes.filter((l) => l.doc.enabled || l.id !== MAIL_LANE_ID).flatMap((l) => unweighedLabels(l.doc.items)))];
+    return { lanes: build.lanes.length - 1, products: catalog.products.length, unweighed };
   },
 
   /** The staff switch. The mail lane accepts while the switch or the override is on. */

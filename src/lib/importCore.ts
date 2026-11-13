@@ -7,7 +7,8 @@ import { offeringKey } from './forms';
 import { DEFAULT_VARIANT_ID, splitKey, variantLabel } from './keys';
 import { catalogPrice, orderTypeForBatch, quote, storefrontOf, type CatalogPrice } from './pricing';
 import { isStoreLaneId, MAIL_LANE_BATCH, monthBatchFor } from './store';
-import type { Batch, Event, Item, Order, OrderType, PublicPrices, RawLine, Settings, Submission } from '../types';
+import { shippingTotal } from './shipping';
+import type { Batch, Event, Item, Order, OrderShipping, OrderType, PublicPrices, RawLine, Settings, Submission } from '../types';
 
 /** Server time of the submission when the rules recorded it, else the customer's clock. */
 export function submissionTime(sub: Pick<Submission, 'createdAt' | 'submittedAt'>): number {
@@ -94,6 +95,8 @@ export function newMonthBatch(event: Event, number: number, now: number, by: str
 export function buildImportedOrder(input: {
   sub: Submission; batch: Batch; event: Event; itemsById: Map<string, Item>; live: PublicPrices | null;
   settings: Pick<Settings, 'storefront'>; transactionId: string; now: number; by: string;
+  /** Shipping worked out by the caller (resolveShipping, then a server re-quote if needed). */
+  shipping?: { value?: OrderShipping; flag?: string };
 }): { order: Omit<Order, 'id'> } | { reject: string } {
   const { sub, batch, event, itemsById, live, settings, now, by } = input;
   const orderType: OrderType = event.kind === 'store' ? 'mail_order' : orderTypeForBatch(batch);
@@ -119,6 +122,12 @@ export function buildImportedOrder(input: {
     notes: (sub.notes ?? '').trim() ? `Customer note: ${sub.notes.trim()}` : '',
     createdAt: now, updatedAt: now, updatedBy: by,
   };
+  if (fulfilment === 'mail') {
+    const ship = input.shipping?.value;
+    if (ship) { order.shipping = ship; order.total += shippingTotal(ship); }
+    if (input.shipping?.flag) order.shippingFlag = input.shipping.flag;
+    if (sub.customerUid) order.customerUid = sub.customerUid;
+  }
   return { order };
 }
 

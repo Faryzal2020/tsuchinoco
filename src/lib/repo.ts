@@ -51,6 +51,7 @@ export const COL = {
   mailMessages: 'mailMessages',
   mailQuota: 'mailQuota',
   contactSubmissions: 'contactSubmissions',
+  customerOrders: 'customerOrders',
 } as const;
 
 type Meta = { createdAt: number; updatedAt: number; updatedBy: string };

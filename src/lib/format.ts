@@ -29,6 +29,9 @@ const localIso = (d: Date): string => `${d.getFullYear()}-${String(d.getMonth() 
 
 export const todayIso = (): string => localIso(new Date());
 
+/** The local calendar day of a timestamp, as YYYY-MM-DD. */
+export const isoOfMs = (ms: number): string => localIso(new Date(ms));
+
 export const addDaysIso = (iso: string, days: number): string => {
   const d = new Date(iso + 'T00:00:00');
   d.setDate(d.getDate() + days);

@@ -7,10 +7,12 @@
 import type {
   Batch, Event, FormDoc, Item, Media, OrderType, PublicForm, PublicPrices, PublishedStoreBlock, Settings, Staff, StoreBlock, StoreCatalog, StoreLaneInfo, StoreProduct, StoreSortKey, StoreSortRule, StoreStatus, StoreTheme, StorefrontSettings,
 } from '@/types';
-import { DEFAULT_STORE_SORT, DEFAULT_STORE_THEME } from '@/types';
+// Relative, not '@/types': the Cloud Functions load this file with plain Node, which has no '@' alias.
+import { DEFAULT_STORE_SORT, DEFAULT_STORE_THEME } from '../types';
 import { variantKey, variantsOf, variantOf } from './keys';
 import { catalogPrice, orderTypeForBatch, quote, storefrontOf, type Quote } from './pricing';
 import { acceptWindow, DEFAULT_THEME, eventCode, offeringKey, pickupDaysFor, windowState } from './forms';
+import { feesFor, weightOfKey } from './shipping';
 
 export const MAIL_LANE_ID = 'store_mail';
 /** Placeholder batch id on the mail lane; the importer files each mail order under its month's batch. */
@@ -144,7 +146,7 @@ export function publishBlocks(blocks: StoreBlock[] | undefined, media: Map<strin
 function laneDoc(id: string, eventId: string, batchId: string, mode: Batch['mode'], title: string, items: PublicForm['items'], settings: Settings, pickupDays: string[], extra: Partial<PublicForm>, version: number, enabled: boolean): Omit<PublicForm, 'id'> {
   return {
     formId: id, eventId, batchId, enabled, mode, title, theme: DEFAULT_THEME, labels: {},
-    settings: { pickupDays, maxQtyPerLine: 20, requirePhone: true, requireEmail: true, thankYouMessage: '', closedMessage: '' },
+    settings: { pickupDays, maxQtyPerLine: 20, requirePhone: true, requireEmail: true, thankYouMessage: '', closedMessage: '', ...feesFor(undefined, settings) },
     currency: settings.currency, blocks: [], items, maxQtyPerLine: 20, publishedAt: Date.now(), version, ...extra,
   };
 }
@@ -179,7 +181,8 @@ export function buildStorefront(input: {
       const item = itemsById.get(entry.itemId);
       if (!item || !item.active) continue;
       const key = offeringKey(entry);
-      map[key] = { name: item.name, variantName: variantOf(item, entry.variantId)?.name ?? '', price: q(item, key, entry.overridePrice).unitPrice, kind: item.kind };
+      const weight = weightOfKey(key, itemsById);
+      map[key] = { name: item.name, variantName: variantOf(item, entry.variantId)?.name ?? '', price: q(item, key, entry.overridePrice).unitPrice, kind: item.kind, ...(weight ? { weight } : {}) };
     }
     if (Object.keys(map).length === 0) continue;
     const id = laneIdFor(b.id);
@@ -195,7 +198,8 @@ export function buildStorefront(input: {
     if (!item.active || item.mailOrder === false) continue;
     const keys = item.kind === 'bundle' ? [item.id] : variantsOf(item).filter((v) => v.active).map((v) => variantKey(item.id, v.id));
     for (const key of keys) {
-      mailMap[key] = { name: item.name, variantName: key.includes(':') ? variantOf(item, key.split(':')[1])?.name ?? '' : '', price: quote(catalogPrice(item, key), 'mail_order', sf.priceBasis).unitPrice, kind: item.kind };
+      const weight = weightOfKey(key, itemsById);
+      mailMap[key] = { name: item.name, variantName: key.includes(':') ? variantOf(item, key.split(':')[1])?.name ?? '' : '', price: quote(catalogPrice(item, key), 'mail_order', sf.priceBasis).unitPrice, kind: item.kind, ...(weight ? { weight } : {}) };
     }
   }
   const mailEnabled = !!status && (status.mailOrderOpen || overrideActive(status));
@@ -242,7 +246,7 @@ export function storeHashFor(input: Omit<Parameters<typeof buildStorefront>[0], 
 /** Stable hash of what a publish would write, for "changed since publish". Prices are live and left out. */
 export function storeHash(catalog: StoreBuild['catalog'], lanes: StoreBuild['lanes']): string {
   const products = catalog.products.map((p) => [p.itemId, p.name, p.type, p.category, p.artist, p.thumb ?? '', p.variants.map((v) => [v.key, v.name, v.thumb ?? ''])]);
-  const ls = lanes.map((l) => [l.id, l.doc.batchId, Object.keys(l.doc.items).sort(), l.doc.acceptFrom, l.doc.acceptUntil, l.doc.overrides, l.doc.settings.pickupDays]);
+  const ls = lanes.map((l) => [l.id, l.doc.batchId, Object.keys(l.doc.items).sort().map((k) => [k, l.doc.items[k].weight ?? '']), l.doc.acceptFrom, l.doc.acceptUntil, l.doc.overrides, l.doc.settings.pickupDays, l.doc.settings.handlingFee, l.doc.settings.packagingFee]);
   const s = JSON.stringify([catalog.title, catalog.intro, catalog.paymentText, catalog.paymentChoices, products, ls, catalog.eventDays, catalog.highlights, catalog.sections, catalog.theme, catalog.blocks]);
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;

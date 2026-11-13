@@ -122,6 +122,148 @@ Staff read and answer customer e-mail on the Emails page (Inbox tab) instead of 
 - The Inbox lists the latest 300 threads and the latest 300 outgoing messages; older ones stay in Firestore but are not shown.
 - A broadcast is limited to 3,000 recipients, and the server only gets about 4 minutes per run to send what the budget allows; the rest follows on the 15-minute runs.
 
+## Shipping phase — Lion Parcel prices at checkout (planned 2026-11-11)
+
+Shipping is charged at checkout through Biteship (courier `lion`), locked in, and paid together
+with the items in one transfer: no second invoice or e-mail for shipping. Probe scripts and test
+results are in `scripts/shipping/`.
+
+**Rules agreed with the circle**
+
+- Lion Parcel only for now: `reg_pack` (REGPACK) and `boss_pack` (BOSSPACK). Ships from
+  Bojonggede, Bogor (postcode 16920; a setting, so it can move).
+- The customer types a destination postcode; no paid place search.
+- Weight = sum of item weights + a fixed 100 g packing. Lion bills whole kg: a remainder above
+  0.3 kg rounds up (1,300 g → 1 kg, 1,310 g → 2 kg).
+- Shipped orders also pay a handling fee (default Rp10.000) and a packaging fee (default Rp5.000),
+  set in storefront settings and per form in form settings. Booth pickups pay neither.
+- The % discount applies to items only, never to shipping or fees.
+- Earliest ship date: event preorders at least 14 days after the event ends; mail orders at least
+  14 days after payment, and at least 14 days after the end of any event they wait for, whichever
+  is later. Checkout states the rule; staff see the date in the Unfulfilled view.
+- Google sign-in is required whenever the order ships (mail orders, and preorders that choose
+  shipping). Booth-pickup preorders keep the anonymous sign-in.
+- Customers see their orders: signed-in customers get an order history page; every order also
+  has a private link (anyone with it can open that one order), sent in the "Payment confirmed"
+  e-mail. The page shows status, payment and, once shipped, courier, tracking number and link.
+
+**Customer flow after choosing items**
+
+1. Cart → Checkout (order type already set by the lane).
+2. Details: name, e-mail, phone. Choosing shipping asks for Google sign-in first and fills in the
+   name and e-mail from the account.
+3. Pick up or ship (preorders) / ship (mail orders).
+4. Shipping: postcode → Lion options appear with price and days, plus "charged as N kg". The
+   customer picks one, then writes the full address. Shown under it: when it ships (the 14-day rule).
+5. Summary: items, shipping (Lion REGPACK), handling, packaging, total. Quantity changes re-quote
+   only when the billed kg changes.
+6. Payment and receipt as today; place order; confirmation and "received" e-mail show the breakdown.
+7. Staff confirm payment → "Payment confirmed" e-mail with the private order link → staff ship and
+   add tracking → "Delivered" e-mail. The order page follows each step.
+
+**Build steps**
+
+S1. Data and settings (built 2026-11-11, uncommitted)
+- `weightGrams` on items, optional per-variant override; bundles sum their components unless set.
+  Published into `publicStore/catalog` and `publicForms`. Publishing warns about offered items
+  without a weight; a missing weight counts as 100 g and flags the order.
+- `StorefrontSettings.shipping` and `FormSettings`: `handlingFee`, `packagingFee`, origin postcode.
+- `BITESHIP_KEY` as a Functions secret (`firebase functions:secrets:set BITESHIP_KEY`).
+- Built: `src/lib/shipping.ts` (weights, billed kg, fees), weight fields in the item editor, a
+  Shipping tab on the Storefront page (origin, fees, items without a weight), fee overrides in
+  form settings, weights and resolved fees in every published form and lane, and a publish
+  warning in the form editor and on the Storefront page. The secret moves to S2. After deploy,
+  every published form shows "changed since publish" once (the hash now covers weights and fees):
+  republish the forms and the storefront so customers' pages carry them.
+
+S2. `quoteShipping` callable (asia-southeast1) (built 2026-11-11, uncommitted, not deployed)
+- Input: postcode, cart lines, form id. The server computes weight from the catalogue; the page's
+  numbers are never trusted. Requires a Google-signed-in caller; about 20 quotes per user per hour.
+- Calls Biteship rates by postcode (Rp5 per call on the live key) and caches in `shippingQuotes`
+  keyed by postcode + billed kg for 24 hours. Each answer gets a `quoteId` storing options and fees.
+
+- Built in `functions/src/shipping.ts`. Weights and fees come from the published form (what
+  the customer saw), not the live catalogue. Collections, all server-only: `shippingQuotes`
+  (one per quote, 24 h), `shippingRates` (price per origin, postcode and billed kg, 24 h) and
+  `shippingLimits` (30 quotes per user per hour; 1,000 Biteship calls per Jakarta day, about
+  Rp5.000). Lion services offered: REGPACK and BOSSPACK; a postcode Lion does not serve gives no
+  options. The sandbox fakes it (`fx.quoteShipping`; postcode 99999 has no delivery).
+- Before deploying: `firebase functions:secrets:set BITESHIP_KEY` with the live key. Deploy
+  together with S3, since nothing calls it before then.
+
+S3. Checkout on the shop and on Forms (one shared shipping picker) (built 2026-11-11, uncommitted, not deployed)
+- Shop `Checkout` in `src/components/shop/Shop.tsx` and the `fulfilment` block in
+  `src/components/form/FormRenderer.tsx`.
+- Submissions gain `postalCode`, `shipping: { quoteId, service }` and `customerUid`.
+  `validSubmission()` allows them and, for `fulfilment == 'mail'`, requires
+  `sign_in_provider == 'google.com'` and `customerUid == request.auth.uid`. Deploy the rules
+  before hosting, as in phase A.
+
+- Built: `src/lib/shippingQuote.ts` (quote state shared by both pages), `src/lib/customerAuth.ts`
+  (Google sign-in on the public pages), the shipping section in the shop `Checkout` and in
+  `FormRenderer` (fulfilment block, and the customer block on post-event forms, which until now
+  had no address field), the shipping lines in totals and on the thank-you screens, and the rules
+  (`validShipping`). The sandbox has a new `/sandbox/form/` page with a fake sign-in.
+- Deploy rules, functions and hosting together: the new rules refuse anonymous mail orders and
+  the old rules refuse the new fields. Set the `BITESHIP_KEY` secret first, and check that
+  tsuchinoco.xyz is an authorised domain for Google sign-in in Firebase Authentication.
+- Until S4, the import ignores the shipping fields: orders are created without the shipping
+  charge in their total.
+
+S4. Import and staff side (built 2026-11-11, uncommitted, not deployed)
+- `buildImportedOrder` reads the quote: same postcode and same billed kg → `order.shipping =
+  { courier, service, fee, handlingFee, packagingFee, weightGrams, billedKg, postalCode, quotedAt }`
+  and `total` includes them. A missing or expired quote is re-quoted on the server; if that fails
+  the order gets `shippingFlag` ("confirm shipping with the customer"), like `priceFlag`.
+- Earliest ship date stored on the order; Unfulfilled view sorts and shows it.
+- Order view shows the shipping lines; staff can override a fee with a note. E-mail templates get
+  `{shipping}`, `{fees}` and `{orderLink}`.
+
+- Built: `resolveShipping` in `src/lib/shipping.ts` checks a submission against its quote (same
+  customer, form, postcode and billed kg, the chosen service offered, submitted before expiry).
+  The server import (`shippingForSubmission` in `functions/src/shipping.ts`) charges a fitting
+  quote and otherwise re-prices through the cached Biteship rates, flagging the order when the
+  amount may differ from what the customer saw; the staff-browser fallback import cannot re-price
+  and flags instead. Orders carry `shipping`, `shippingFlag` and `customerUid`; `total` includes
+  shipping, handling and packaging.
+- Staff: the order view shows the shipping lines, a "Shipping checked" flag box and a Change /
+  Add shipping editor (a note is required; the total moves by the difference). The Orders list
+  shows "Ships from" (`shipFromOf` in `src/lib/orders.ts`), sorts by it, lists shipping flags
+  under "Price or shipping to check", and exports shipping and postcode. Deliver pre-fills
+  Lion Parcel. Order e-mails put shipping rows in `{{items}}` and gain `{{itemsTotal}}`,
+  `{{shipping}}`, `{{shippingFee}}`, `{{handlingFee}}` and `{{packagingFee}}`.
+- Fixed along the way: `src/lib/store.ts` imported values from `@/types`, which the compiled
+  functions cannot resolve (added 2026-11-09, after the last functions deploy); it now imports
+  `../types`, so the next functions deploy loads.
+
+S5. Customer order pages (built 2026-11-12, uncommitted, not deployed)
+- A function mirrors each order into `customerOrders/{token}` (random 128-bit token) with only
+  what the customer may see: code, status, payment, lines, shipping, total, tracking, `uid`.
+- Rules: `get` by anyone (the token is the secret), `list` only where `uid == request.auth.uid`.
+- `/shop/orders/` (history, Google sign-in) and `/shop/order/?t=<token>` (private link; query
+  parameter because the site is a static export).
+
+- Built: `customerOrderView` in `src/lib/customerOrders.ts`; `functions/src/customerOrders.ts`
+  (`ensureCustomerToken`, the `mirrorCustomerOrder` trigger, which skips writes when only staff
+  data changed); `customerOrders` rules (get by token, list own uid); `/shop/order/?t=` and
+  `/shop/orders/` with `CustomerOrderCard` and `CustomerOrderHistory`; a "My orders" link on
+  the shop; `{{orderLink}}` and `{{orderUrl}}` in order e-mails, added to the built-in "Payment
+  confirmed" and "Delivered" templates (custom templates need the placeholder added by staff).
+  The e-mail queue gives an order its token before rendering. Sandbox: `/sandbox/my-orders/`.
+- Orders placed before S5 get a token and a customer copy on their next change.
+
+**Deploying the shipping phase** (all at once, from a clean build):
+1. `firebase functions:secrets:set BITESHIP_KEY` with the live key.
+2. Firebase Authentication: Google enabled (it is, for staff) and `tsuchinoco.xyz` in the
+   authorised domains.
+3. `firebase deploy --only firestore:rules,functions,hosting`.
+4. Republish the storefront and every open form, so customer pages carry weights and fees.
+5. Add weights to the catalogue (Storefront → Shipping lists what is missing) and add
+   "Lion Parcel" to the couriers in Settings.
+
+**Later**: book the pickup through Biteship's order API so the waybill lands on the order and
+triggers the "Delivered" e-mail. It spends courier balance, so it is a separate decision.
+
 ## Later and undecided
 
 - Customer-choice bundles ("any 3 keychains") on the form. Needs a decision on the data model first.

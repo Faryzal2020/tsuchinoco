@@ -2,7 +2,7 @@
 import { httpsCallable } from 'firebase/functions';
 import { functions } from './firebase';
 import type { UsageReport } from './usage';
-import type { MailInboxInfo, NotificationType, OrderEmail } from '@/types';
+import type { MailInboxInfo, NotificationType, OrderEmail, ShippingQuoteResult } from '@/types';
 
 const call = <Req, Res>(name: string) => async (data: Req): Promise<Res> => {
   const fn = httpsCallable<Req, Res>(functions, name);
@@ -47,6 +47,12 @@ export const fx = {
   renameMailInbox: call<{ address: string; name: string }, { address: string; name: string }>('renameMailInbox'),
 
   usageMetrics: call<Record<string, never>, UsageReport>('usageMetrics'),
+
+  /**
+   * Lion Parcel prices for a cart on a published form or storefront lane, shipped to a postcode.
+   * Needs a Google sign-in. The returned quoteId goes on the submission; the import charges it.
+   */
+  quoteShipping: call<{ formId: string; postalCode: string; lines: Record<string, number> }, ShippingQuoteResult>('quoteShipping'),
 
   /** "Send again" for one order-update e-mail. Records the attempt on the order. */
   resendOrderEmail: call<{ orderId: string; type: NotificationType }, OrderEmail>('resendOrderEmail'),

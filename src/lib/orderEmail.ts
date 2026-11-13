@@ -3,6 +3,7 @@
 import type { Batch, Event, Item, NotificationSetting, NotificationType, Order, Settings } from '../types';
 import { variantLabel } from './keys';
 import { eventCode } from './forms';
+import { orderPageUrl } from './customerOrders';
 
 export const NOTIFICATION_TYPES: NotificationType[] = ['received', 'paid', 'delivered'];
 
@@ -48,6 +49,7 @@ export const BUILTIN_TEMPLATES: Record<NotificationType, { subject: string; html
 <p>Your payment for order <strong>{{orderNumber}}</strong> is confirmed.</p>
 {{items}}
 <p><strong>Total: {{total}}</strong><br/>{{fulfilment}}</p>
+<p>{{orderLink}}</p>
 <p>Tsuchinoco</p>`,
   },
   delivered: {
@@ -56,11 +58,12 @@ export const BUILTIN_TEMPLATES: Record<NotificationType, { subject: string; html
 <p>Your order <strong>{{orderNumber}}</strong> has been handed to {{courier}}.</p>
 <p>Tracking number: <strong>{{trackingLink}}</strong></p>
 {{items}}
+<p>{{orderLink}}</p>
 <p>Tsuchinoco</p>`,
   },
 };
 
-export const PLACEHOLDERS = ['name', 'orderNumber', 'orderType', 'event', 'items', 'total', 'fulfilment', 'pickupDay', 'paymentMethod', 'courier', 'trackingNumber', 'trackingUrl', 'trackingLink'];
+export const PLACEHOLDERS = ['name', 'orderNumber', 'orderType', 'event', 'items', 'itemsTotal', 'shipping', 'shippingFee', 'handlingFee', 'packagingFee', 'total', 'fulfilment', 'pickupDay', 'paymentMethod', 'courier', 'trackingNumber', 'trackingUrl', 'trackingLink', 'orderLink', 'orderUrl'];
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const money = (n: number, currency: string) => `${currency} ${Math.round(n).toLocaleString('en-US')}`;
@@ -77,17 +80,28 @@ export function orderEmailVars(o: Order, ctx: { event?: Event; batch?: Batch; it
     const label = variantLabel(ctx.itemsById.get(l.itemId), l.variantId ?? 'default');
     return `<tr><td style="padding:2px 12px 2px 0">${l.qty} × ${esc(label)}</td><td style="padding:2px 0;text-align:right">${esc(money(l.lineTotal, ctx.currency))}</td></tr>`;
   }).join('');
+  // Shipping sits under the items, so templates that only use {{items}} and {{total}} still add up.
+  const s = o.fulfilment === 'mail' ? o.shipping : undefined;
+  const extraRow = (label: string, n: number) => (n > 0 ? `<tr><td style="padding:2px 12px 2px 0">${esc(label)}</td><td style="padding:2px 0;text-align:right">${esc(money(n, ctx.currency))}</td></tr>` : '');
+  const shipRows = s ? extraRow(`Shipping · ${s.name}${s.billedKg ? ` · ${s.billedKg} kg` : ''}`, s.fee) + extraRow('Handling', s.handlingFee) + extraRow('Packaging', s.packagingFee) : '';
+  const itemsTotal = o.rawLines.reduce((n, l) => n + l.lineTotal, 0);
   const t = o.tracking;
   const trackingLink = t?.number ? (t.url ? `<a href="${esc(t.url)}">${esc(t.number)}</a>` : esc(t.number)) : '';
   const plain: Record<string, string> = {
     name: o.customer.name, email: o.customer.email, orderNumber: o.transactionId ?? '', orderType, event: ctx.event?.kind === 'store' ? 'Mail order' : ctx.event?.name ?? '',
     batch: ctx.batch ? String(ctx.batch.number) : '', total: money(o.total, ctx.currency), fulfilment, pickupDay: o.pickupDay ?? '', paymentMethod: o.paymentMethod ?? '',
     courier: t?.courier ?? '', trackingNumber: t?.number ?? '', trackingUrl: t?.url ?? '',
+    itemsTotal: money(itemsTotal, ctx.currency),
+    shipping: s ? `${s.name}, ${money(s.fee, ctx.currency)}` : '',
+    shippingFee: s ? money(s.fee, ctx.currency) : '', handlingFee: s ? money(s.handlingFee, ctx.currency) : '', packagingFee: s ? money(s.packagingFee, ctx.currency) : '',
+    orderUrl: o.customerToken ? orderPageUrl(o.customerToken) : '',
   };
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(plain)) out[k] = esc(v);
-  out.items = `<table style="border-collapse:collapse">${rows}</table>`;
+  out.items = `<table style="border-collapse:collapse">${rows}${shipRows}</table>`;
   out.trackingLink = trackingLink;
+  // Ready-made link to the customer's order page; empty until the order has its token.
+  out.orderLink = o.customerToken ? `<a href="${esc(orderPageUrl(o.customerToken))}">Follow your order online</a>` : '';
   return out;
 }
 

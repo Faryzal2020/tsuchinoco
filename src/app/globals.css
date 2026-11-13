@@ -541,6 +541,11 @@ dialog.modal::backdrop { background: rgba(38, 36, 31, 0.35); }
 .pf-summary td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .pf-summary tr.total td { border-bottom: 0; font-weight: 700; font-size: 16px; padding-top: 10px; }
 
+.pf-signin { display: grid; gap: 10px; justify-items: start; background: var(--pf-accent-soft); border-radius: calc(var(--pf-radius) - 4px); padding: 12px 14px; font-size: 14px; }
+.pf-signin-btn { font: inherit; font-weight: 700; border: 1.5px solid var(--pf-accent); color: var(--pf-accent); background: var(--pf-surface); border-radius: 999px; padding: 8px 16px; cursor: pointer; }
+.pf-signin-btn:disabled { opacity: .6; cursor: default; }
+.pf-postcode { max-width: 9em; letter-spacing: .08em; }
+.pf-link { font: inherit; background: none; border: 0; padding: 0; color: var(--pf-accent); text-decoration: underline; cursor: pointer; }
 .pf-submit {
   display: inline-flex; align-items: center; justify-content: center; width: 100%; min-height: 50px; padding: 0 20px;
   border-radius: var(--pf-radius); border: 1.5px solid color-mix(in srgb, var(--pf-accent) 80%, black);

@@ -223,4 +223,6 @@ export { importSubmissionOnCreate, orderEmailsOnWrite, resendOrderEmail } from '
 
 // ---- Mail: shared inbox, contact form and send queue (Mail phase) ----
 // Broadcasts used to be sent directly by sendBroadcastEmail; they now go through queueBroadcast.
+export { quoteShipping } from './shipping';
+export { mirrorCustomerOrder } from './customerOrders';
 export { contactOnCreate, drainMailQueue, listMailInboxes, mailQueueOnCreate, mailWebhook, queueBroadcast, queueMail, renameMailInbox } from './mail';

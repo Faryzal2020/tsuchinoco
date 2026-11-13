@@ -34,10 +34,19 @@ service cloud.firestore {
         && str(c.email, 160) && str(c.phone, 60)
         && (!('address' in c) || str(c.address, 600));
     }
+    function validShipping(d) {
+      return request.auth.token.firebase.sign_in_provider == 'google.com'
+        && d.customerUid == request.auth.uid
+        && d.postalCode is string && d.postalCode.matches('^[1-9][0-9]{4}$')
+        && d.shipping is map && d.shipping.keys().hasOnly(['quoteId', 'service']) && d.shipping.keys().hasAll(['quoteId', 'service'])
+        && str(d.shipping.quoteId, 40) && d.shipping.quoteId.size() > 0
+        // 'service' is a keyword in the rules language, so it is read by index.
+        && str(d.shipping['service'], 40) && d.shipping['service'].size() > 0;
+    }
     function validSubmission() {
       let d = request.resource.data;
       let p = pub();
-      return d.keys().hasOnly(['formId', 'eventId', 'batchId', 'version', 'code', 'customer', 'fulfilment', 'pickupDay', 'paymentProofUrl', 'notes', 'lines', 'submittedAt', 'status', 'orderType', 'seen', 'createdAt', 'paymentMethod'])
+      return d.keys().hasOnly(['formId', 'eventId', 'batchId', 'version', 'code', 'customer', 'fulfilment', 'pickupDay', 'paymentProofUrl', 'notes', 'lines', 'submittedAt', 'status', 'orderType', 'seen', 'createdAt', 'paymentMethod', 'postalCode', 'shipping', 'customerUid'])
         && d.keys().hasAll(['formId', 'eventId', 'batchId', 'version', 'code', 'customer', 'fulfilment', 'notes', 'lines', 'submittedAt', 'status'])
         && str(d.formId, 40) && p.data.enabled == true
         && d.eventId == p.data.eventId && d.batchId == p.data.batchId
@@ -55,6 +64,8 @@ service cloud.firestore {
         && (!('orderType' in d) || d.orderType in ['preorder', 'mail_order'])
         && (!('seen' in d) || (d.seen is map && d.seen.size() <= 60))
         && (!('paymentMethod' in d) || str(d.paymentMethod, 60))
+        // Shipped orders need a Google sign-in, a postcode and a quote; pickups carry none of it.
+        && (d.fulfilment == 'mail' ? validShipping(d) : !('postalCode' in d) && !('shipping' in d) && !('customerUid' in d))
         // Server time, so the importer can apply the price grace period fairly.
         && (!('createdAt' in d) || d.createdAt == request.time)
         // The batch dates: no submissions before the opening day or after the closing day.
@@ -78,6 +89,15 @@ service cloud.firestore {
     match /publicPrices/{id} {
       allow read: if true;
       allow write: if isStaff();
+    }
+
+    // ---- Public exception 6: the customer's copy of an order (written by a function only). ----
+    // The document id is a 128-bit secret sent in the order e-mails: anyone holding it can open
+    // that one copy. A signed-in customer can list the copies carrying their uid. No one lists
+    // the collection otherwise, and the copies hold no address, phone or e-mail.
+    match /customerOrders/{token} {
+      allow get: if true;
+      allow list: if request.auth != null && resource.data.uid == request.auth.uid;
     }
 
     // ---- Public exception 5: the /shop/ contact form. ----

@@ -6,8 +6,9 @@ import { doc, runTransaction } from 'firebase/firestore';
 import { db } from './firebase';
 import { COL, allocateTransactionId, clean, logActivity } from './repo';
 import { PUBLIC_PRICES_ID } from './prices';
-import { buildImportedOrder, importTarget, newMonthBatch } from './importCore';
-import type { Batch, Event, Item, PublicPrices, Settings, Submission } from '@/types';
+import { buildImportedOrder, importTarget, newMonthBatch, submissionTime } from './importCore';
+import { resolveShipping, unweighedFlag } from './shipping';
+import type { Batch, Event, Item, OrderShipping, PublicForm, PublicPrices, Settings, ShippingQuote, Submission } from '@/types';
 
 export { rawLinesFromSubmission, submissionTime } from './importCore';
 
@@ -51,8 +52,24 @@ export async function importSubmission(subId: string, ctx: ImportContext, by: st
     }
     const priceSnap = await tx.get(doc(db, COL.publicPrices, PUBLIC_PRICES_ID));
     const live = priceSnap.exists() ? (priceSnap.data() as PublicPrices) : null;
+    // Shipping: the quote when it still fits. This fallback cannot ask the courier, so anything
+    // else is flagged for staff (the server import re-prices instead).
+    let shipping: { value?: OrderShipping; flag?: string } | undefined;
+    if (sub.fulfilment === 'mail') {
+      const quoteId = sub.shipping?.quoteId ?? '';
+      const pfSnap = await tx.get(doc(db, COL.publicForms, sub.formId));
+      const qSnap = /^[A-Za-z0-9_-]{1,40}$/.test(quoteId) ? await tx.get(doc(db, 'shippingQuotes', quoteId)) : null;
+      const r = resolveShipping({
+        sub, submittedAt: submissionTime(sub),
+        pf: pfSnap.exists() ? (pfSnap.data() as PublicForm) : null,
+        quote: qSnap?.exists() ? (qSnap.data() as ShippingQuote) : null,
+      });
+      if (r.kind === 'ok') shipping = { value: r.shipping, ...(r.unweighed.length ? { flag: unweighedFlag(r.unweighed) } : {}) };
+      else if (r.kind === 'flag') shipping = { flag: r.flag };
+      else if (r.kind === 'requote') shipping = { flag: `Shipping was not charged: ${r.reason}. Agree the shipping fee with the customer.` };
+    }
     // Price before allocating a number, so a rejected submission does not use one up.
-    const probe = buildImportedOrder({ sub, batch, event, itemsById: ctx.itemsById, live, settings: ctx.settings, transactionId: '', now: Date.now(), by });
+    const probe = buildImportedOrder({ sub, batch, event, itemsById: ctx.itemsById, live, settings: ctx.settings, transactionId: '', now: Date.now(), by, shipping });
     if ('reject' in probe) {
       tx.update(subRef, { status: 'rejected', rejectReason: probe.reject });
       return 'rejected';

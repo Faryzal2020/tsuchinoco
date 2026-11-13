@@ -4,7 +4,7 @@
 import type { Batch, Courier, Event, Order, OrderStatus, OrderType, PaymentStatus } from '@/types';
 import { OPEN_ORDER_STATUSES } from '../types';
 import { eventCode } from './forms';
-import { formatDate, todayIso } from './format';
+import { addDaysIso, formatDate, isoOfMs, todayIso } from './format';
 
 export const isStoreEvent = (e: Pick<Event, 'kind'> | undefined): boolean => e?.kind === 'store';
 
@@ -80,4 +80,27 @@ export function trackingUrlFor(couriers: Courier[], courier: string, number: str
   const c = couriers.find((x) => x.name === courier);
   if (!c?.trackingUrl || !number.trim()) return undefined;
   return c.trackingUrl.replace('{number}', encodeURIComponent(number.trim()));
+}
+
+/** Days between the event ending (or the payment, for mail orders) and the earliest shipping day. */
+export const SHIP_AFTER_DAYS = 14;
+
+/**
+ * The earliest day a shipped order may leave. Preorders: 14 days after their event ends. Mail
+ * orders: 14 days after payment, and 14 days after the event they wait for, whichever is later;
+ * unpaid mail orders have no date yet. Null for pickups and finished orders.
+ */
+export function shipFromOf(o: Order, type: OrderType, event: Event | undefined, events: Event[]): { date: string | null; label: string } | null {
+  if (o.fulfilment !== 'mail' || !isUnfulfilled(o)) return null;
+  if (type === 'preorder') {
+    const end = event?.endDate || event?.startDate;
+    if (!end) return null;
+    const date = addDaysIso(end, SHIP_AFTER_DAYS);
+    return { date, label: `Ships from ${formatDate(date)}` };
+  }
+  if (paymentOf(o) !== 'paid' || !o.paidAt) return { date: null, label: `Ships ${SHIP_AFTER_DAYS} days after payment` };
+  const held = holdOf(o, type, events);
+  const dates = [addDaysIso(isoOfMs(o.paidAt), SHIP_AFTER_DAYS), ...(held ? [addDaysIso(held.endDate || held.startDate, SHIP_AFTER_DAYS)] : [])].sort();
+  const date = dates[dates.length - 1];
+  return { date, label: `Ships from ${formatDate(date)}` };
 }

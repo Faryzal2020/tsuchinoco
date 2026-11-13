@@ -9,7 +9,7 @@ import { StaticAuthProvider, type AuthCtx } from '@/lib/auth';
 import { StaticDataProvider, type Data } from '@/lib/data';
 import { PrefsProvider } from '@/lib/prefs';
 import { StaticImporterProvider } from '@/components/SubmissionImporter';
-import { batchRepo, orderRepo, settingsRepo } from '@/lib/repo';
+import { batchRepo, itemRepo, orderRepo, settingsRepo } from '@/lib/repo';
 import { storeRepo } from '@/lib/storeActions';
 import { buildStorefront, MAIL_LANE_BATCH, MAIL_LANE_ID, monthBatchFor, overrideActive, endOfToday, storeHashFor } from '@/lib/store';
 import { rawLinesFromSubmission } from '@/lib/importCore';
@@ -19,8 +19,9 @@ import { orderTypeForBatch } from '@/lib/pricing';
 import { paymentOf } from '@/lib/orders';
 import { fx } from '@/lib/functions';
 import { primeMedia } from '@/lib/media';
+import { feesFor, parcelForForm, QUOTE_TTL_MS, resolveShipping, shippingTotal, unweighedFlag, unweighedLabels, validPostalCode } from '@/lib/shipping';
 import { emailRef, emailsDue, notificationsOf } from '@/lib/orderEmail';
-import type { Batch, Event, Order, OrderStatus, PublicForm, StoreCatalog, StoreStatus } from '@/types';
+import type { Batch, Event, Order, OrderStatus, PublicForm, Settings, ShippingOption, ShippingQuote, ShippingQuoteResult, StoreCatalog, StoreStatus } from '@/types';
 import type { ShopDraft } from '@/components/shop/Shop';
 import { makeSandbox, SANDBOX_ME, type SandboxState } from './fixtures';
 
@@ -70,7 +71,7 @@ export default function SandboxProvider({ children }: { children: React.ReactNod
 
   // Swap the writes the staff pages call for in-memory versions while the sandbox is mounted.
   useEffect(() => {
-    const saved = { order: { ...orderRepo }, batch: { ...batchRepo }, settings: { ...settingsRepo }, store: { ...storeRepo }, fx: { ...fx } };
+    const saved = { order: { ...orderRepo }, batch: { ...batchRepo }, item: { ...itemRepo }, settings: { ...settingsRepo }, store: { ...storeRepo }, fx: { ...fx } };
     // Stands in for the server's e-mail trigger: records the e-mails it would send (nothing is sent).
     const withEmails = (before: Order | null, after: Order, settings: Full['settings']): Order => {
       const on = notificationsOf(settings);
@@ -85,6 +86,7 @@ export default function SandboxProvider({ children }: { children: React.ReactNod
     const patchOrders = (ids: Set<string>, fn: (o: Order) => Order) => set((x) => ({
       ...x, orders: x.orders.map((o) => (ids.has(o.id) ? withEmails(o, { ...fn(o), updatedAt: Date.now(), updatedBy: SANDBOX_ME }, x.settings) : o)),
     }));
+    fx.quoteShipping = async (req) => sandboxQuote(ref.current.lanes[req.formId], ref.current.settings, req);
     fx.resendOrderEmail = async ({ orderId, type }) => {
       const o = ref.current.orders.find((x) => x.id === orderId)!;
       const entry = { type, to: o.customer.email, at: Date.now(), ok: true, id: 'sandbox', by: SANDBOX_ME, ref: emailRef(o, type) };
@@ -114,9 +116,10 @@ export default function SandboxProvider({ children }: { children: React.ReactNod
       set((x) => ({ ...x, counters: { ...x.counters, [batch.id]: seq + 1 }, orders: [{ ...data, id, transactionId: tid, createdAt: Date.now(), updatedAt: Date.now(), updatedBy: SANDBOX_ME } as Order, ...x.orders] }));
       return { id, transactionId: tid };
     };
+    itemRepo.patch = async (id, data) => { set((x) => ({ ...x, items: x.items.map((i) => (i.id === id ? { ...i, ...data, updatedAt: Date.now() } : i)) })); };
     batchRepo.patch = async (id, data) => { set((x) => ({ ...x, batches: x.batches.map((b) => (b.id === id ? { ...b, ...data } : b)) })); };
     settingsRepo.save = async (data) => { set((x) => ({ ...x, settings: { ...x.settings, ...data } })); };
-    storeRepo.publish = async () => { set((x) => publishInto(x)); const c = ref.current.catalog; return { lanes: (c?.lanes.length ?? 1) - 1, products: c?.products.length ?? 0 }; };
+    storeRepo.publish = async () => { set((x) => publishInto(x)); const c = ref.current.catalog; return { lanes: (c?.lanes.length ?? 1) - 1, products: c?.products.length ?? 0, unweighed: [...new Set(Object.values(ref.current.lanes).flatMap((l) => unweighedLabels(l.items)))] }; };
     const setStatusDoc = (next: StoreStatus) => set((x) => ({
       ...x, storeStatus: next,
       lanes: x.lanes[MAIL_LANE_ID] ? { ...x.lanes, [MAIL_LANE_ID]: { ...x.lanes[MAIL_LANE_ID], enabled: next.mailOrderOpen || overrideActive(next) } } : x.lanes,
@@ -129,7 +132,7 @@ export default function SandboxProvider({ children }: { children: React.ReactNod
       if (exists) set((x) => ({ ...x, lanes: { ...x.lanes, [id]: { ...x.lanes[id], enabled: open } } }));
       return exists;
     };
-    return () => { Object.assign(orderRepo, saved.order); Object.assign(batchRepo, saved.batch); Object.assign(settingsRepo, saved.settings); Object.assign(storeRepo, saved.store); Object.assign(fx, saved.fx); };
+    return () => { Object.assign(orderRepo, saved.order); Object.assign(batchRepo, saved.batch); Object.assign(itemRepo, saved.item); Object.assign(settingsRepo, saved.settings); Object.assign(storeRepo, saved.store); Object.assign(fx, saved.fx); };
   }, [set]);
 
   const placeShopOrder = useCallback((draft: ShopDraft): Order => {
@@ -142,13 +145,18 @@ export default function SandboxProvider({ children }: { children: React.ReactNod
     const { lines: rawLines, changed } = rawLinesFromSubmission({ ...draft, submittedAt: Date.now() }, batch, itemsById, x.publicPrices, x.settings, orderType);
     const seq = x.counters[batch.id] ?? 1;
     const fulfilment = batch.mode === 'post' ? 'mail' : draft.fulfilment;
+    // Shipping as the server import would charge it, against the quotes this sandbox handed out.
+    const r = resolveShipping({ sub: draft, submittedAt: Date.now(), pf: x.lanes[draft.formId] ?? null, quote: draft.shipping ? sandboxQuotes.get(draft.shipping.quoteId) ?? null : null });
+    const ship = r.kind === 'ok' ? r.shipping : undefined;
+    const shipFlag = r.kind === 'ok' ? unweighedFlag(r.unweighed) : r.kind === 'flag' ? r.flag : r.kind === 'requote' ? `Shipping was priced again at import because ${r.reason}.` : '';
     const order: Order = {
       id: `sbx${Date.now()}`, eventId: event.id, batchId: batch.id, source: 'store', externalId: '', transactionId: transactionId(event, batch, seq),
       pickupDay: fulfilment === 'pickup' ? draft.pickupDay : undefined, submittedAt: Date.now(), customer: draft.customer, fulfilment,
       status: fulfilment === 'pickup' ? 'awaiting_pickup' : 'awaiting_shipment', orderType, payment: 'unpaid', paymentMethod: draft.paymentMethod,
       priceFlag: changed.length ? `Price changed during checkout: ${changed.join(', ')}. Confirm the total with the customer.` : undefined,
-      rawLines, lines: expandLines(rawLines, itemsById), total: rawLines.reduce((t, l) => t + l.lineTotal, 0),
+      rawLines, lines: expandLines(rawLines, itemsById), total: rawLines.reduce((t, l) => t + l.lineTotal, 0) + (fulfilment === 'mail' ? shippingTotal(ship) : 0),
       notes: draft.notes ? `Customer note: ${draft.notes}` : '', createdAt: Date.now(), updatedAt: Date.now(), updatedBy: 'customer',
+      ...(fulfilment === 'mail' ? { shipping: ship, shippingFlag: shipFlag || undefined, customerUid: draft.customerUid } : {}),
     };
     set((y) => ({ ...y, counters: { ...y.counters, [batch.id]: seq + 1 }, orders: [withEmailsOnCreate(order, y.settings), ...y.orders] }));
     return order;
@@ -184,3 +192,31 @@ export default function SandboxProvider({ children }: { children: React.ReactNod
     </Ctx.Provider>
   );
 }
+
+/**
+ * Made-up Lion prices for the sandbox: per kg by the postcode's first digit (1 is Jakarta, the
+ * cheapest); 99999 has no delivery. Same checks and fees as the real quoteShipping.
+ */
+export async function sandboxQuote(pf: Pick<PublicForm, 'items' | 'maxQtyPerLine' | 'settings'> | undefined, settings: Pick<Settings, 'storefront'>, req: { postalCode: string; lines: Record<string, number>; formId?: string; uid?: string }): Promise<ShippingQuoteResult> {
+  await new Promise((r) => setTimeout(r, 400));
+  if (!validPostalCode(req.postalCode)) throw new Error('Enter a five-digit postcode.');
+  if (!pf) throw new Error('This form is not taking orders.');
+  const parcel = parcelForForm(pf, req.lines);
+  if ('error' in parcel) throw new Error(parcel.error);
+  const perKg = 9000 + (Number(req.postalCode[0]) - 1) * 3000;
+  const options: ShippingOption[] = req.postalCode === '99999' ? [] : [
+    { courier: 'lion', service: 'reg_pack', name: 'Lion REGPACK', price: perKg * parcel.billedKg, etd: '2 - 3 days' },
+    { courier: 'lion', service: 'boss_pack', name: 'Lion BOSSPACK', price: Math.ceil((perKg * 1.3) / 1000) * 1000 * parcel.billedKg, etd: '1 - 2 days' },
+  ];
+  const now = Date.now();
+  const quoteId = `sbxq${now}`;
+  const quote: ShippingQuote = {
+    uid: req.uid ?? 'sbx-customer', formId: req.formId ?? '', postalCode: req.postalCode, originPostalCode: '16920', lines: parcel.lines, grams: parcel.grams, billedKg: parcel.billedKg,
+    unweighed: parcel.unweighed, options, ...feesFor(pf.settings, settings), createdAt: now, expiresAt: now + QUOTE_TTL_MS,
+  };
+  sandboxQuotes.set(quoteId, quote);
+  return { quoteId, postalCode: quote.postalCode, grams: quote.grams, billedKg: quote.billedKg, unweighed: quote.unweighed, options, handlingFee: quote.handlingFee, packagingFee: quote.packagingFee, expiresAt: quote.expiresAt };
+}
+
+/** Quotes handed out by sandboxQuote, so a sandbox order is charged like a real import. */
+const sandboxQuotes = new Map<string, ShippingQuote>();

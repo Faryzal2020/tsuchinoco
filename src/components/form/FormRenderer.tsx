@@ -8,6 +8,7 @@ import type { Fulfilment, PublicBlock, PublicForm, PublicProduct, PublicProductG
 import { confirmationCode, labelOf, windowState, type FormLabelKey } from '@/lib/forms';
 import { formatDate, formatMoney } from '@/lib/format';
 import { RichText } from './richText';
+import { shipRule, useShippingQuote, type ShippingDeps, type ShippingQuoteHook } from '@/lib/shippingQuote';
 import { ArrowDown, ChevronDown, ChevronUp, ShoppingCart, Trash2, XCircle } from 'lucide-react';
 
 type Snapshot = Omit<PublicForm, 'id'>;
@@ -42,13 +43,18 @@ interface Props {
   preview?: boolean;
   onSubmit?: (draft: SubmissionDraft, proofFile?: File) => Promise<void>;
   onRemoveProduct?: (blockId: string, keys: string[]) => void;
+  /** Google sign-in and shipping quotes. Without it shipped orders cannot be placed (the preview shows a note). */
+  shipping?: ShippingDeps;
 }
 
-interface Errors { name?: string; email?: string; phone?: string; pickupDay?: string; address?: string; lines?: string; submit?: string }
+interface Errors { name?: string; email?: string; phone?: string; pickupDay?: string; address?: string; lines?: string; submit?: string; ship?: string }
+
+/** The shipping part of a shipped order's summary. */
+interface ShipLine { name: string; kg: number; price: number; handling: number; packaging: number }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export default function FormRenderer({ form, preview, onSubmit, onRemoveProduct }: Props) {
+export default function FormRenderer({ form, preview, onSubmit, onRemoveProduct, shipping }: Props) {
   const L = (k: FormLabelKey) => labelOf(form.labels, k);
   const hasFulfilment = form.mode !== 'post' && form.blocks.some((b) => b.type === 'fulfilment');
   const [qty, setQty] = useState<Record<string, number>>({});
@@ -65,6 +71,16 @@ export default function FormRenderer({ form, preview, onSubmit, onRemoveProduct 
 
   const chosen = useMemo(() => Object.entries(qty).filter(([, q]) => q > 0).map(([key, q]) => ({ key, qty: q, item: form.items[key] })).filter((l) => l.item), [qty, form.items]);
   const total = chosen.reduce((s, l) => s + l.qty * l.item.price, 0);
+  const cartLines = useMemo(() => Object.fromEntries(chosen.map((l) => [l.key, l.qty])), [chosen]);
+  const shipped = effectiveFulfilment === 'mail';
+  const q = useShippingQuote({
+    deps: shipping, form, lines: cartLines, active: shipped && chosen.length > 0,
+    onSignedIn: (u) => setC((x) => ({ ...x, name: x.name || u.name, email: x.email || u.email })),
+  });
+  const shipLine: ShipLine | null = shipped && q.option && q.result
+    ? { name: q.option.name, kg: q.result.billedKg, price: q.option.price, handling: q.result.handlingFee, packaging: q.result.packagingFee }
+    : null;
+  const grandTotal = total + (shipLine ? q.extra : 0);
 
   const setQ = (key: string, v: number) => setQty((m) => ({ ...m, [key]: Math.max(0, Math.min(max, Math.round(v) || 0)) }));
 
@@ -76,6 +92,7 @@ export default function FormRenderer({ form, preview, onSubmit, onRemoveProduct 
     if (form.settings.requirePhone && !c.phone.trim()) e.phone = L('required');
     if (effectiveFulfilment === 'pickup' && hasFulfilment && form.settings.pickupDays.length > 0 && !pickupDay) e.pickupDay = L('required');
     if (effectiveFulfilment === 'mail' && !c.address.trim()) e.address = L('required');
+    if (shipped && !preview) { const why = shippingProblem(q, !!shipping); if (why) e.ship = why; }
     if (chosen.length === 0) e.lines = L('emptyOrder');
     return e;
   };
@@ -93,6 +110,7 @@ export default function FormRenderer({ form, preview, onSubmit, onRemoveProduct 
     const draft: SubmissionDraft = {
       formId: form.formId, eventId: form.eventId, batchId: form.batchId, version: form.version, code: newCode,
       customer: { name: c.name.trim(), email: c.email.trim(), phone: c.phone.trim(), ...(effectiveFulfilment === 'mail' && c.address.trim() ? { address: c.address.trim() } : {}) },
+      ...(shipped && q.result && q.option ? { postalCode: q.result.postalCode, shipping: { quoteId: q.result.quoteId, service: q.option.service }, customerUid: shipping?.customer?.uid } : {}),
       fulfilment: effectiveFulfilment,
       ...(effectiveFulfilment === 'pickup' && pickupDay ? { pickupDay } : {}),
       notes: c.notes.trim(),
@@ -145,7 +163,7 @@ export default function FormRenderer({ form, preview, onSubmit, onRemoveProduct 
               <div className="pf-hint">{L('keepCode')}</div>
             </div>
             <div className="pf-summary" style={{ marginTop: 18, textAlign: 'left' }}>
-              <Summary lines={chosen} total={total} currency={form.currency} L={L} />
+              <Summary lines={chosen} total={grandTotal} ship={shipLine} currency={form.currency} L={L} />
             </div>
             <p className="pf-hint" style={{ marginTop: 12 }}>{c.name} · {effectiveFulfilment === 'pickup' ? `${L('pickup')}${pickupDay ? ` · ${pickupDay}` : ''}` : L('mail')}</p>
           </div>
@@ -159,13 +177,13 @@ export default function FormRenderer({ form, preview, onSubmit, onRemoveProduct 
                     fulfilment={effectiveFulfilment} setFulfilment={setFulfilment} pickupDay={pickupDay} setPickupDay={setPickupDay}
                     proofFile={proofFile} setProofFile={setProofFile}
                     chosen={chosen} total={total} sending={phase === 'sending'}
-                    onRemoveProduct={onRemoveProduct} />
+                    onRemoveProduct={onRemoveProduct} q={q} live={!!shipping} shipLine={shipLine} grandTotal={grandTotal} />
                 );
               })}
               {!form.blocks.some((b) => b.type === 'submit') && (
                 <>
                   <PaymentProofBlock L={L} proofFile={proofFile} setProofFile={setProofFile} disabled={phase === 'sending'} />
-                  <SubmitBlock L={L} form={form} chosen={chosen} total={total} errors={errors} sending={phase === 'sending'} hasProof={!!proofFile} />
+                  <SubmitBlock L={L} form={form} chosen={chosen} total={grandTotal} ship={shipLine} errors={errors} sending={phase === 'sending'} hasProof={!!proofFile} />
                 </>
               )}
               {/* Honeypot, invisible to people. */}
@@ -224,6 +242,10 @@ interface BlockProps {
   sending: boolean;
   preview?: boolean;
   onRemoveProduct?: (blockId: string, keys: string[]) => void;
+  q: ShippingQuoteHook;
+  live: boolean;
+  shipLine: ShipLine | null;
+  grandTotal: number;
 }
 
 function Block(p: BlockProps) {
@@ -327,6 +349,8 @@ function Block(p: BlockProps) {
               <input className="pf-input" type="tel" inputMode="tel" value={c.phone} autoComplete="tel" aria-invalid={!!errors.phone} onChange={(e) => setC({ ...c, phone: e.target.value })} />
             </Field>
           </div>
+          {/* Post-event forms always ship and have no fulfilment block, so shipping sits here. */}
+          {form.mode === 'post' && <ShippingFields p={p} />}
         </div>
       );
     case 'fulfilment':
@@ -346,7 +370,7 @@ function Block(p: BlockProps) {
               </select>
             </Field>
           )}
-          {p.fulfilment === 'mail' && <AddressField L={L} c={c} setC={setC} error={errors.address} />}
+          {p.fulfilment === 'mail' && <ShippingFields p={p} />}
         </div>
       );
     case 'notes':
@@ -393,7 +417,7 @@ function Block(p: BlockProps) {
       return (
         <React.Fragment key={b.id}>
           <PaymentProofBlock L={L} proofFile={p.proofFile} setProofFile={p.setProofFile} disabled={p.sending} />
-          <SubmitBlock L={L} form={form} chosen={p.chosen} total={p.total} errors={errors} sending={p.sending} hasProof={!!p.proofFile} />
+          <SubmitBlock L={L} form={form} chosen={p.chosen} total={p.grandTotal} ship={p.shipLine} errors={errors} sending={p.sending} hasProof={!!p.proofFile} />
         </React.Fragment>
       );
     default:
@@ -550,6 +574,64 @@ function PaymentProofBlock({
   );
 }
 
+/** Why a shipped order cannot be placed yet, or '' when the shipping is ready. */
+function shippingProblem(q: ShippingQuoteHook, live: boolean): string {
+  if (!live) return 'Shipping prices only work on the live form.';
+  switch (q.state) {
+    case 'signin': return 'Sign in with Google to have your order shipped.';
+    case 'postcode': return 'Enter your five-digit postcode.';
+    case 'loading': return 'Wait a moment for the shipping price.';
+    case 'none': return 'Lion Parcel does not deliver to this postcode.';
+    case 'error': return q.error || 'Could not get shipping prices.';
+    default: return q.option ? '' : 'Choose a shipping service.';
+  }
+}
+
+/** Google sign-in, postcode, the Lion services and the address, for an order that ships. */
+function ShippingFields({ p }: { p: BlockProps }) {
+  const { q, L, c, setC, errors, form, live, preview } = p;
+  const kind = form.mode === 'post' ? 'mail_order' : 'preorder';
+  if (!live) {
+    return (
+      <>
+        <div className="pf-hint">{preview ? 'Customers sign in with Google here and get Lion Parcel prices for their postcode. The preview cannot fetch prices.' : 'Shipping is not available on this page.'}</div>
+        <AddressField L={L} c={c} setC={setC} error={errors.address} />
+      </>
+    );
+  }
+  if (q.state === 'signin') {
+    return (
+      <div className="pf-signin">
+        <div><b>Sign in with Google to ship this order.</b> You can follow it later from your order page.</div>
+        <button type="button" className="pf-signin-btn" onClick={q.signIn} disabled={q.signingIn}>{q.signingIn ? 'Signing in…' : 'Sign in with Google'}</button>
+        {(q.error || errors.ship) && <span className="pf-error">{q.error || errors.ship}</span>}
+      </div>
+    );
+  }
+  return (
+    <>
+      <Field label="Postcode" required>
+        <input className="pf-input pf-postcode" inputMode="numeric" autoComplete="postal-code" maxLength={5} placeholder="e.g. 16920" value={q.postal} onChange={(e) => q.setPostal(e.target.value)} />
+      </Field>
+      {q.state === 'loading' && <div className="pf-hint" aria-live="polite">Checking Lion Parcel prices…</div>}
+      {q.state === 'none' && <div className="pf-error">Lion Parcel does not deliver to this postcode. Check it, or contact us.</div>}
+      {q.state === 'error' && <div className="pf-error">{q.error} <button type="button" className="pf-link" onClick={q.retry}>Try again</button></div>}
+      {q.state === 'ready' && q.result && (
+        <div className="pf-choice" role="radiogroup" aria-label="Shipping service">
+          {q.result.options.map((o) => (
+            <label key={o.service}>
+              <input type="radio" name="ship" checked={q.option?.service === o.service} onChange={() => q.setService(o.service)} />
+              <span><b>{o.name} · {formatMoney(o.price, form.currency)}</b><br /><span className="pf-hint">{o.etd ? `${o.etd} after it ships` : 'Delivery time varies'} · charged as {q.result!.billedKg} kg</span></span>
+            </label>
+          ))}
+        </div>
+      )}
+      <AddressField L={L} c={c} setC={setC} error={errors.address} />
+      <div className="pf-hint">{shipRule(kind)}</div>
+    </>
+  );
+}
+
 function AddressField({ L, c, setC, error }: Pick<BlockProps, 'L' | 'c' | 'setC'> & { error?: string }) {
   return (
     <Field label={L('address')} required error={error} hint={L('addressHint')}>
@@ -558,28 +640,32 @@ function AddressField({ L, c, setC, error }: Pick<BlockProps, 'L' | 'c' | 'setC'
   );
 }
 
-function SubmitBlock({ L, form, chosen, total, errors, sending, hasProof }: Pick<BlockProps, 'L' | 'form' | 'chosen' | 'total' | 'errors' | 'sending'> & { hasProof?: boolean }) {
+function SubmitBlock({ L, form, chosen, total, ship, errors, sending, hasProof }: Pick<BlockProps, 'L' | 'form' | 'chosen' | 'total' | 'errors' | 'sending'> & { hasProof?: boolean; ship?: ShipLine | null }) {
   // Post batches have no fulfilment block, so the address lives here.
   const sendingText = hasProof ? L('paymentProofUploading') : L('submitting');
   return (
     <div className="pf-card pf-grid">
       <div className="pf-summary">
         <div className="pf-label">{L('yourOrder')}</div>
-        {chosen.length === 0 ? <div className={errors.lines ? 'pf-error' : 'pf-hint'}>{L('emptyOrder')}</div> : <Summary lines={chosen} total={total} currency={form.currency} L={L} />}
+        {chosen.length === 0 ? <div className={errors.lines ? 'pf-error' : 'pf-hint'}>{L('emptyOrder')}</div> : <Summary lines={chosen} total={total} ship={ship} currency={form.currency} L={L} />}
       </div>
+      {errors.ship && <div className="pf-error">{errors.ship}</div>}
       {errors.submit && <div className="pf-error">{errors.submit}</div>}
       <button type="submit" className="pf-submit" disabled={sending}>{sending ? sendingText : `${L('submit')}${total > 0 ? ` · ${formatMoney(total, form.currency)}` : ''}`}</button>
     </div>
   );
 }
 
-function Summary({ lines, total, currency, L }: { lines: BlockProps['chosen']; total: number; currency: string; L: BlockProps['L'] }) {
+function Summary({ lines, total, ship, currency, L }: { lines: BlockProps['chosen']; total: number; ship?: ShipLine | null; currency: string; L: BlockProps['L'] }) {
   return (
     <table>
       <tbody>
         {lines.map((l) => (
           <tr key={l.key}><td>{l.qty} × {l.item.name}{l.item.variantName && ` · ${l.item.variantName}`}</td><td className="num">{formatMoney(l.qty * l.item.price, currency)}</td></tr>
         ))}
+        {ship && <tr><td>Shipping · {ship.name} · {ship.kg} kg</td><td className="num">{formatMoney(ship.price, currency)}</td></tr>}
+        {ship && ship.handling > 0 && <tr><td>Handling</td><td className="num">{formatMoney(ship.handling, currency)}</td></tr>}
+        {ship && ship.packaging > 0 && <tr><td>Packaging</td><td className="num">{formatMoney(ship.packaging, currency)}</td></tr>}
         <tr className="total"><td>{L('total')}</td><td className="num">{formatMoney(total, currency)}</td></tr>
       </tbody>
     </table>

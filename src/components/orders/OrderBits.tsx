@@ -7,7 +7,7 @@ import { useData } from '@/lib/data';
 import { useToast } from '@/components/ui/Toast';
 import { orderRepo } from '@/lib/repo';
 import { storefrontOf } from '@/lib/pricing';
-import { holdOf, orderTypeOf, stageOf, trackingUrlFor, typeLabelOf } from '@/lib/orders';
+import { holdOf, orderTypeOf, stageOf, trackingUrlFor, typeLabelOf, shipFromOf } from '@/lib/orders';
 import { eventCode } from '@/lib/forms';
 import { formatDate, formatDateTime } from '@/lib/format';
 import { fx } from '@/lib/functions';
@@ -27,11 +27,14 @@ export function OrderStagePill({ order, className }: { order: Order; className?:
 /** "Preorder · CF24" over "Pick up Day 2 (13 Dec)", or "Mail order" over "Ships after CF24 (ends 13 Dec)". */
 export function OrderTypeCell({ order }: { order: Order }) {
   const { events, batches } = useData();
-  const t = typeLabelOf(order, events.find((e) => e.id === order.eventId), batches.find((b) => b.id === order.batchId), events);
+  const event = events.find((e) => e.id === order.eventId);
+  const t = typeLabelOf(order, event, batches.find((b) => b.id === order.batchId), events);
+  const ship = shipFromOf(order, t.type, event, events);
   return (
     <>
       <span className={`order-type ${t.type === 'preorder' ? 'order-type-po' : 'order-type-mo'}`}>{t.title}</span>
       <span className="hint block">{t.detail}</span>
+      {ship && <span className="hint block">{ship.label}{order.shipping ? ` · ${order.shipping.name}` : ''}</span>}
     </>
   );
 }
@@ -51,8 +54,10 @@ export function DeliverDialog({ order, open, onClose }: { order: Order | null; o
 
   useEffect(() => {
     if (!open || !order) return;
-    setCourier(order.tracking?.courier && couriers.some((c) => c.name === order.tracking?.courier) ? order.tracking.courier : couriers[0]?.name ?? '__other');
-    setOther(order.tracking?.courier && !couriers.some((c) => c.name === order.tracking?.courier) ? order.tracking.courier : '');
+    // An order shipped through the checkout already knows its courier (Lion Parcel).
+    const known = order.tracking?.courier || (order.shipping?.courier === 'lion' ? 'Lion Parcel' : '');
+    setCourier(known && couriers.some((c) => c.name === known) ? known : known ? '__other' : couriers[0]?.name ?? '__other');
+    setOther(known && !couriers.some((c) => c.name === known) ? known : '');
     setNumber(order.tracking?.number ?? '');
     setNotify(true);
   }, [open, order]); // eslint-disable-line react-hooks/exhaustive-deps

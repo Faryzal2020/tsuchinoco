@@ -7,6 +7,7 @@ import type {
 import { catalogPrice, orderTypeForBatch, quote, storefrontOf, type Quote } from './pricing';
 import { DEFAULT_VARIANT_ID, newId, variantKey, variantOf, variantPrice } from './keys';
 import { addDaysIso, formatDate, titleCase } from './format';
+import { feesFor, weightOfKey } from './shipping';
 
 // ---- Labels: every customer-facing string, editable per form (phase 2 adds the editor). ----
 
@@ -274,7 +275,10 @@ export function buildPublicForm(form: FormDoc, batch: Batch, event: Event, items
     if (b.type === 'products') {
       const groups = groupsFor(resolveSource(b.source, batch, items), items, media, orderType, basis);
       if (groups.length === 0) continue; // nothing on offer for this block
-      for (const g of groups) for (const p of g.products) pfItems[p.key] = { name: p.name, variantName: p.variantName, price: p.price, kind: g.kind };
+      for (const g of groups) for (const p of g.products) {
+        const weight = weightOfKey(p.key, items);
+        pfItems[p.key] = { name: p.name, variantName: p.variantName, price: p.price, kind: g.kind, ...(weight ? { weight } : {}) };
+      }
       blocks.push({ ...b, groups });
     } else if (b.type === 'header') {
       const m = b.imageId ? media.get(b.imageId) : undefined;
@@ -299,7 +303,7 @@ export function buildPublicForm(form: FormDoc, batch: Batch, event: Event, items
   }
   return {
     formId: form.id, eventId: event.id, batchId: batch.id, enabled: form.enabled, mode: batch.mode,
-    title: form.title, theme: form.theme, labels: form.labels ?? {}, settings: form.settings, currency: settings.currency,
+    title: form.title, theme: form.theme, labels: form.labels ?? {}, settings: { ...form.settings, ...feesFor(form.settings, settings) }, currency: settings.currency,
     blocks, items: pfItems, maxQtyPerLine: form.settings.maxQtyPerLine, publishedAt: Date.now(), version,
     ...acceptWindow(batch),
     overrides: Object.fromEntries(batch.offering.filter((e) => typeof e.overridePrice === 'number').map((e) => [offeringKey(e), e.overridePrice as number])),
@@ -375,10 +379,10 @@ export function assertPublicFormFits(pf: Omit<PublicForm, 'id'>): void {
 }
 
 /** Cheap stable hash of what publish would produce, to show "changed since publish". */
-export function formHash(form: FormDoc, batch: Batch, items: Map<string, Item>): string {
-  // Catalogue prices are live, so they are not part of the hash; offering overrides and the batch dates are.
-  const offering = batch.offering.map((e) => { const i = items.get(e.itemId); return i ? [offeringKey(e), i.name, variantOf(i, e.variantId)?.name ?? '', e.overridePrice ?? '', i.thumbnailId ?? '', variantOf(i, e.variantId)?.thumbnailId ?? ''] : null; });
-  const s = JSON.stringify([form.title, form.theme, form.blocks, form.labels, form.settings, form.enabled, batch.mode, batch.opensAt, batch.closesAt, offering]);
+export function formHash(form: FormDoc, batch: Batch, items: Map<string, Item>, settings: Pick<Settings, 'storefront'>): string {
+  // Catalogue prices are live, so they are not part of the hash; offering overrides, weights, fees and the batch dates are.
+  const offering = batch.offering.map((e) => { const i = items.get(e.itemId); return i ? [offeringKey(e), i.name, variantOf(i, e.variantId)?.name ?? '', e.overridePrice ?? '', i.thumbnailId ?? '', variantOf(i, e.variantId)?.thumbnailId ?? '', weightOfKey(offeringKey(e), items) ?? ''] : null; });
+  const s = JSON.stringify([form.title, form.theme, form.blocks, form.labels, form.settings, form.enabled, batch.mode, batch.opensAt, batch.closesAt, offering, feesFor(form.settings, settings)]);
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
   return (h >>> 0).toString(36);

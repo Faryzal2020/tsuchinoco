@@ -3,6 +3,7 @@
 // Staff-side actions on in-house forms: create for a batch, publish, toggle accepting.
 import { batchRepo, formRepo } from './repo';
 import { fetchManyMedia } from './media';
+import { unweighedLabels } from './shipping';
 import { assertPublicFormFits, buildPublicForm, formHash, formMediaIds, formUrl, newFormDoc } from './forms';
 import type { Batch, Event, FormDoc, Item, PublicForm, Settings } from '@/types';
 
@@ -12,18 +13,23 @@ export async function createFormForBatch(batch: Batch, event: Event, itemsById: 
   return formId;
 }
 
-/** Resolve the draft against the offering and catalogue and write the public snapshot. */
-export async function publishForm(form: FormDoc, batch: Batch, event: Event, itemsById: Map<string, Item>, settings: Settings, current: PublicForm | undefined, by: string, enabled = form.enabled): Promise<void> {
+/**
+ * Resolve the draft against the offering and catalogue and write the public snapshot. Returns the
+ * items without a weight when the form can ship (a post-event batch or a pick-up-or-ship block).
+ */
+export async function publishForm(form: FormDoc, batch: Batch, event: Event, itemsById: Map<string, Item>, settings: Settings, current: PublicForm | undefined, by: string, enabled = form.enabled): Promise<{ unweighed: string[] }> {
   const media = await fetchManyMedia(formMediaIds(form, batch, itemsById));
   const pf = buildPublicForm({ ...form, enabled }, batch, event, itemsById, media, settings, (current?.version ?? 0) + 1);
   assertPublicFormFits(pf);
-  await formRepo.publish(form.id, pf, formHash({ ...form, enabled }, batch, itemsById), by);
+  await formRepo.publish(form.id, pf, formHash({ ...form, enabled }, batch, itemsById, settings), by);
+  const ships = batch.mode === 'post' || form.blocks.some((b) => b.type === 'fulfilment');
+  return { unweighed: ships ? unweighedLabels(pf.items) : [] };
 }
 
 /** True when publishing now would produce something different from what customers see. */
-export function formChangedSincePublish(form: FormDoc, batch: Batch, itemsById: Map<string, Item>): boolean {
+export function formChangedSincePublish(form: FormDoc, batch: Batch, itemsById: Map<string, Item>, settings: Pick<Settings, 'storefront'>): boolean {
   if (!form.publishedAt) return true;
-  return formHash(form, batch, itemsById) !== form.publishedHash;
+  return formHash(form, batch, itemsById, settings) !== form.publishedHash;
 }
 
 /** Build the snapshot without writing it, for the staff preview. */

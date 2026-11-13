@@ -15,6 +15,9 @@ import {
   buildStorefront, groupSections, isStorefrontBatch, MAIL_LANE_ID, mediaIdsForProducts, overrideActive, SORT_KEY_LABELS, sortRulesOf, storeHashFor, storeOrder, storeState, storeThemeOf, STORE_EVENT_CODE,
 } from '@/lib/store';
 import { storefrontOf } from '@/lib/pricing';
+import { PACKING_GRAMS, shippingOf, unweighedWarning, validFee, weightOfKey } from '@/lib/shipping';
+import { variantKey, variantsOf } from '@/lib/keys';
+import ItemEditorModal from '@/components/catalog/ItemEditorModal';
 import { formatDate, formatDateTime } from '@/lib/format';
 import { newId } from '@/lib/keys';
 import { DEFAULT_STORE_SORT, type Batch, type Event, type Media, type PublicForm, type StoreBlock, type StoreBlockPosition, type StoreCatalog, type StoreSortKey, type StoreSortRule, type StoreTheme, type StorefrontSettings } from '@/types';
@@ -28,7 +31,7 @@ import { cn } from '@/lib/utils';
 export default function StorefrontPage() {
   const { items, events, batches, formsById, publicFormsById, settings, storeCatalog, storeStatus, staff } = useData();
   const { me } = useAuth();
-  const { run } = useToast();
+  const { run, toast, error } = useToast();
   const [busy, setBusy] = useState('');
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(t); }, []);
@@ -46,7 +49,11 @@ export default function StorefrontPage() {
   const override = overrideActive(storeStatus, now);
 
   const act = async (key: string, fn: () => Promise<unknown>, ok?: string) => { setBusy(key); await run(fn, ok); setBusy(''); };
-  const publish = () => act('publish', () => storeRepo.publish({ items, events, batches, formsById, settings, current: storeCatalog, status: storeStatus, staff, by: me }), 'Storefront published');
+  const publish = () => act('publish', async () => {
+    const r = await storeRepo.publish({ items, events, batches, formsById, settings, current: storeCatalog, status: storeStatus, staff, by: me });
+    const warn = unweighedWarning(r.unweighed);
+    if (warn) error(`Storefront published. ${warn}`); else toast('Storefront published');
+  });
 
   const preorderBatches = batches
     .filter((b) => b.mode === 'preorder')
@@ -143,9 +150,9 @@ export default function StorefrontPage() {
 
 // ---- Customise: one draft of the storefront settings, five tabs, one Save, a live preview ----
 
-type Tab = 'order' | 'look' | 'banners' | 'highlights' | 'text';
+type Tab = 'order' | 'look' | 'banners' | 'highlights' | 'text' | 'shipping';
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'order', label: 'Order' }, { id: 'look', label: 'Look' }, { id: 'banners', label: 'Banners' }, { id: 'highlights', label: 'Highlights' }, { id: 'text', label: 'Text' },
+  { id: 'order', label: 'Order' }, { id: 'look', label: 'Look' }, { id: 'banners', label: 'Banners' }, { id: 'highlights', label: 'Highlights' }, { id: 'text', label: 'Text' }, { id: 'shipping', label: 'Shipping' },
 ];
 
 /** Drops undefined values, which Firestore rejects, and keeps the draft comparable by JSON. */
@@ -154,7 +161,7 @@ const tidy = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
 function Customise({ className }: { className?: string }) {
   const { items, events, batches, formsById, settings, storeStatus, publicPrices, staff } = useData();
   const { me } = useAuth();
-  const { run } = useToast();
+  const { run, error } = useToast();
   const base = useMemo(() => tidy(storefrontOf(settings)), [settings]);
   const [draft, setDraft] = useState<StorefrontSettings>(base);
   const baseJson = JSON.stringify(base);
@@ -172,6 +179,7 @@ function Customise({ className }: { className?: string }) {
   const [tab, setTab] = useState<Tab>('order');
   const [saving, setSaving] = useState(false);
   const save = async () => {
+    if (draft.shipping && !/^\d{5}$/.test(draft.shipping.originPostalCode)) { setTab('shipping'); error('The ships-from postcode needs five digits.'); return; }
     setSaving(true);
     await run(() => settingsRepo.save({ currency: settings.currency, itemTypes: settings.itemTypes, pickupDeadlineDays: settings.pickupDeadlineDays, storefront: tidy(draft) }, me), 'Saved. Publish to show it on the shop.');
     setSaving(false);
@@ -223,6 +231,7 @@ function Customise({ className }: { className?: string }) {
         {tab === 'banners' && <BannersTab draft={draft} up={up} />}
         {tab === 'highlights' && <HighlightsTab draft={draft} up={up} />}
         {tab === 'text' && <TextTab draft={draft} up={up} />}
+        {tab === 'shipping' && <ShippingTab draft={draft} up={up} />}
       </div>
 
       <div className="border-t border-line bg-cream-2 px-5 py-2.5 flex flex-wrap items-center gap-2">
@@ -503,6 +512,69 @@ function TextTab({ draft, up }: { draft: StorefrontSettings; up: (p: Partial<Sto
         <span className="label flex items-center gap-1.5">Payment choices<Help text="One per line. The customer picks one at checkout and it is saved on the order." /></span>
         <Textarea rows={4} value={choices} onChange={(e) => { setChoices(e.target.value); up({ paymentChoices: parse(e.target.value) }); }} aria-label="Payment choices, one per line" />
       </div>
+    </div>
+  );
+}
+
+// ---- Shipping ----
+
+function ShippingTab({ draft, up }: { draft: StorefrontSettings; up: (p: Partial<StorefrontSettings>) => void }) {
+  const { items, itemsById, settings } = useData();
+  const ship = shippingOf({ storefront: draft });
+  const set = (patch: Partial<typeof ship>) => up({ shipping: { ...ship, ...patch } });
+  const fee = (v: string) => validFee(v === '' ? 0 : Number(v)) ?? 0;
+  const [editing, setEditing] = useState<string | null>(null);
+  // Active items whose units (or one of their active variants) have no weight, so shipping cannot price them.
+  const unweighed = useMemo(() => items
+    .filter((i) => i.active)
+    .map((i) => {
+      const keys = i.kind === 'bundle' ? [i.id] : variantsOf(i).filter((v) => v.active).map((v) => variantKey(i.id, v.id));
+      const missing = keys.filter((k) => !weightOfKey(k, itemsById));
+      return { item: i, missing: missing.length, total: keys.length };
+    })
+    .filter((x) => x.missing > 0), [items, itemsById]);
+  const postcodeOk = /^\d{5}$/.test(ship.originPostalCode);
+
+  return (
+    <div className="grid gap-5 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+      <div className="grid gap-3 content-start">
+        <Heading level={3} tip="Lion Parcel prices come from Biteship at checkout and are locked in with the order. Booth pickups pay none of this.">Shipped orders</Heading>
+        <Field label="Ships from (postcode)" hint={postcodeOk ? 'Bojonggede, Bogor is 16920' : 'Needs five digits'}>
+          <Input inputMode="numeric" maxLength={5} className="w-28" value={ship.originPostalCode} onChange={(e) => set({ originPostalCode: e.target.value.replace(/\D/g, '').slice(0, 5) })} />
+        </Field>
+        <div className="grid gap-3 grid-cols-2">
+          <Field label={`Handling fee (${settings.currency})`} hint="Per shipped order">
+            <Input type="number" min={0} step={1000} value={ship.handlingFee} onChange={(e) => set({ handlingFee: fee(e.target.value) })} />
+          </Field>
+          <Field label={`Packaging fee (${settings.currency})`} hint="Per shipped order">
+            <Input type="number" min={0} step={1000} value={ship.packagingFee} onChange={(e) => set({ packagingFee: fee(e.target.value) })} />
+          </Field>
+        </div>
+        <p className="hint">Each form can set its own fees in its settings; blank there means these. Parcels add {PACKING_GRAMS} g for packing. Lion charges whole kilograms and rounds up above 0,3 kg (1.300 g is 1 kg, 1.310 g is 2 kg).</p>
+      </div>
+      <div>
+        <Heading level={3} className="mb-2" tip="Weights are set per item, and per variant where they differ, in the catalogue. Bundles without their own weight add up their components. Click an item to edit it.">
+          Items without a weight
+        </Heading>
+        {unweighed.length === 0 ? (
+          <p className="hint">Every active item has a weight.</p>
+        ) : (
+          <>
+            <p className="hint mb-2">{unweighed.length} active {unweighed.length === 1 ? 'item needs' : 'items need'} a weight before shipping can price {unweighed.length === 1 ? 'it' : 'them'}. Until then each unit counts as {PACKING_GRAMS} g and the order is flagged.</p>
+            <ul className="max-h-72 overflow-auto rounded-lg border border-line bg-white text-sm divide-y divide-line">
+              {unweighed.map(({ item, missing, total }) => (
+                <li key={item.id}>
+                  <button type="button" className="w-full text-left px-3 py-1.5 flex items-baseline gap-2 min-w-0 bg-transparent border-0 cursor-pointer hover:bg-cream" onClick={() => setEditing(item.id)}>
+                    <span className="truncate">{item.name}</span>
+                    <span className="hint ml-auto whitespace-nowrap">{item.kind === 'bundle' ? 'bundle' : total > 1 ? `${missing} of ${total} variants` : item.type}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </div>
+      <ItemEditorModal itemId={editing} open={!!editing} onClose={() => setEditing(null)} />
     </div>
   );
 }

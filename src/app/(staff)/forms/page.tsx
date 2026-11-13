@@ -40,7 +40,7 @@ export default function FormsPage() {
           <tbody>
             {rows.map(({ batch: b, event: e, form, pub }) => {
               const legacy = b.form?.provider === 'jotform';
-              const changed = form ? formChangedSincePublish(form, b, itemsById) : false;
+              const changed = form ? formChangedSincePublish(form, b, itemsById, settings) : false;
               const waiting = pending.filter((s) => s.batchId === b.id).length;
               const url = form ? formUrl(form.id) : legacy ? b.form!.url : '';
               return (
