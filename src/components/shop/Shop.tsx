@@ -16,7 +16,7 @@ import type { ShippingDeps } from '@/lib/shippingQuote';
 import { Stepper, Text, type Line, type Priced } from './parts';
 import CartPanel, { PANEL_KEY } from './CartPanel';
 import CheckoutModal from './CheckoutModal';
-import { EMAIL_RE, clearCheckout, emptyCheckout, readCheckout, writeCheckout, type CheckoutState } from '@/lib/checkoutState';
+import { EMAIL_RE, clearCheckout, emptyCheckout, readCheckout, sanitizeCheckout, writeCheckout, type CheckoutState } from '@/lib/checkoutState';
 import './shop.css';
 
 export type ShopDraft = Omit<Submission, 'id'>;
@@ -92,7 +92,9 @@ export default function Shop({ catalog, status, docs, prices, onSubmit, onContac
   const pickLane = (id: string) => { setLaneId(id); remember(LANE_KEY, id); };
 
   const [cart, setCart] = useState<Record<string, number>>({});
-  useEffect(() => { if (preview) return; try { const c = JSON.parse(read(CART_KEY) || '{}'); if (c && typeof c === 'object') setCart(c); } catch { /* ignore */ } }, [preview]);
+  // A cart restored from an earlier visit is not "an item added", so it must not pop the panel open.
+  const restoredCart = useRef(false);
+  useEffect(() => { if (preview) return; try { const c = JSON.parse(read(CART_KEY) || '{}'); if (c && typeof c === 'object') { if (Object.keys(c).length > 0) restoredCart.current = true; setCart(c); } } catch { /* ignore */ } }, [preview]);
   const saveCart = (next: Record<string, number>) => { setCart(next); remember(CART_KEY, JSON.stringify(next)); };
   const maxQty = Math.max(1, choice?.doc.maxQtyPerLine ?? 20);
   const setQty = (key: string, q: number) => {
@@ -175,12 +177,16 @@ export default function Shop({ catalog, status, docs, prices, onSubmit, onContac
   const [ck, setCk] = useState<CheckoutState>(() => emptyCheckout('', 'mail_order', defaultPay));
   const laneKey = choice?.lane.id ?? '';
   const laneKind = choice?.lane.kind ?? 'mail_order';
+  const laneDays = useMemo(() => choice?.lane.pickupDays ?? [], [choice]);
+  // The receipt file lives here so closing and reopening the dialog keeps it; a reload cannot.
+  const [proof, setProof] = useState<File | null>(null);
   useEffect(() => {
     if (!laneKey) { setCk(emptyCheckout('', 'mail_order', defaultPay)); return; }
     let kv: Storage | undefined;
     try { kv = preview ? undefined : window.sessionStorage; } catch { kv = undefined; }
-    setCk(readCheckout(kv, laneKey, laneKind, defaultPay));
-  }, [laneKey, laneKind, defaultPay, preview]);
+    setCk(sanitizeCheckout(readCheckout(kv, laneKey, laneKind, defaultPay), { days: laneDays, pays: catalog.paymentChoices, defaultPay }));
+    setProof(null);
+  }, [laneKey, laneKind, laneDays, catalog.paymentChoices, defaultPay, preview]);
   const patchCheckout = (p: Partial<CheckoutState>) => setCk((s) => {
     const n = { ...s, ...p };
     if (!preview) { try { writeCheckout(window.sessionStorage, n); } catch { /* ignore */ } }
@@ -197,7 +203,11 @@ export default function Shop({ catalog, status, docs, prices, onSubmit, onContac
   useEffect(() => {
     const was = prevCount.current;
     prevCount.current = count;
-    if (was === 0 && count > 0 && !preview) {
+    if (was === 0 && count > 0) {
+      // The first rise from empty may be the cart coming back from localStorage; that one never opens the panel.
+      const restored = restoredCart.current;
+      restoredCart.current = false;
+      if (restored || preview) return;
       try {
         if (sessionKV()?.getItem(PANEL_KEY) === null && window.matchMedia('(min-width: 641px)').matches) setPanel(true);
       } catch { /* ignore */ }
@@ -288,13 +298,14 @@ export default function Shop({ catalog, status, docs, prices, onSubmit, onContac
           {choice && ck.open && ck.laneId === choice.lane.id && (
             <CheckoutModal
               catalog={catalog} choice={choice} okLines={okLines} badLines={badLines} total={total}
-              deps={shipping} preview={preview} state={ck} patch={patchCheckout}
-              onSubmit={async (draft, proof, grandTotal, extras) => {
-                await onSubmit(choice, draft, proof);
+              deps={shipping} preview={preview} state={ck} patch={patchCheckout} proof={proof} setProof={setProof}
+              onSubmit={async (draft, file, grandTotal, extras) => {
+                await onSubmit(choice, draft, file);
                 setDone({ code: draft.code, lines: okLines, total: grandTotal, label: choice.label, extras });
                 saveCart({});
                 if (!preview) { try { clearCheckout(window.sessionStorage); } catch { /* ignore */ } }
                 setCk(emptyCheckout(choice.lane.id, choice.lane.kind, defaultPay));
+                setProof(null);
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
             />

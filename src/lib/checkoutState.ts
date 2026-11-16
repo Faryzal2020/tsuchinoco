@@ -67,6 +67,13 @@ export function readCheckout(kv: KV | undefined, laneId: string, kind: OrderType
   }
 }
 
+/** Drops a pick-up day or payment choice that staff have removed since the state was stored. */
+export function sanitizeCheckout(s: CheckoutState, o: { days: string[]; pays: string[]; defaultPay: string }): CheckoutState {
+  const day = s.day && o.days.includes(s.day) ? s.day : '';
+  const pay = s.pay && o.pays.includes(s.pay) ? s.pay : o.defaultPay;
+  return day === s.day && pay === s.pay ? s : { ...s, day, pay };
+}
+
 export function writeCheckout(kv: KV | undefined, s: CheckoutState): void {
   try { kv?.setItem(CHECKOUT_KEY, JSON.stringify(s)); } catch { /* private mode or quota */ }
 }

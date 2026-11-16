@@ -247,8 +247,9 @@
   .shop-chip { min-height: 36px; padding: 8px 12px; }
   .shop-checkout { padding: 16px 14px; }
   .shop-checkout-head h2 { font-size: 20px; }
-  .shop-modal { width: 100vw; max-height: 100vh; margin: 0; }
-  .shop-modal-body { border-radius: 0; border-left: 0; border-right: 0; min-height: 100vh; max-height: 100vh; padding: 16px 14px calc(16px + env(safe-area-inset-bottom)); }
+  /* dvh follows the browser toolbars on phones, so the place-order row never hides under them. */
+  .shop-modal { width: 100vw; max-height: 100vh; max-height: 100dvh; margin: 0; }
+  .shop-modal-body { border-radius: 0; border-left: 0; border-right: 0; min-height: 100vh; max-height: 100vh; min-height: 100dvh; max-height: 100dvh; padding: 16px 14px calc(16px + env(safe-area-inset-bottom)); }
   .shop-thanks { padding: 18px 16px; }
   .shop-code { font-size: 26px; overflow-wrap: anywhere; }
 }

@@ -11,7 +11,7 @@ import { confirmationCode } from '@/lib/forms';
 import { formatMoney } from '@/lib/format';
 import { shipRule, useShippingQuote, type ShippingDeps } from '@/lib/shippingQuote';
 import { clampStep, detailsProblems, stepsFor, type CheckoutState, type StepChecks, type StepId } from '@/lib/checkoutState';
-import { findAddress, forgetAddress, rememberAddress, type SavedAddress } from '@/lib/addressBook';
+import { findAddress, forgetInBook, rememberInBook, type SavedAddress } from '@/lib/addressBook';
 import { ShopShipping, Text, shippingProblem, type Line } from './parts';
 import type { ShopDraft } from './Shop';
 
@@ -25,6 +25,9 @@ export interface CheckoutModalProps {
   preview?: boolean;
   state: CheckoutState;
   patch: (p: Partial<CheckoutState>) => void;
+  /** The receipt file, owned by the page so closing and reopening the dialog keeps it (a reload cannot). */
+  proof: File | null;
+  setProof: (f: File | null) => void;
   onSubmit: (d: ShopDraft, proof: File | undefined, grandTotal: number, extras: [string, number][]) => Promise<void>;
 }
 
@@ -49,7 +52,7 @@ export function StepDots({ steps, current, onJump }: { steps: StepId[]; current:
   );
 }
 
-export default function CheckoutModal({ catalog, choice, okLines, badLines, total, deps, state, patch, onSubmit }: CheckoutModalProps) {
+export default function CheckoutModal({ catalog, choice, okLines, badLines, total, deps, state, patch, proof, setProof, onSubmit }: CheckoutModalProps) {
   const kind = choice.lane.kind;
   const isPre = kind === 'preorder';
   const steps = stepsFor(kind);
@@ -82,16 +85,14 @@ export default function CheckoutModal({ catalog, choice, okLines, badLines, tota
   const pickSaved = (a: SavedAddress | null) => { setPostal(a?.postalCode ?? ''); patch({ address: a?.address ?? '' }); };
   const forget = (a: SavedAddress) => {
     if (!book || !uid || !saved) return;
-    const next = forgetAddress(saved, a.id);
-    setSaved(next);
-    book.save(uid, next).catch((e) => console.error('[shop] forget address', e));
+    setSaved(saved.filter((x) => x.id !== a.id));
+    forgetInBook(book, uid, a.id).then((l) => { if (l) setSaved(l); }).catch((e) => console.error('[shop] forget address', e));
   };
   const chosenSaved = saved ? findAddress(saved, state.postal, state.address) : undefined;
 
   const checks: StepChecks = { needDay: state.fulfilment === 'pickup' && days.length > 0, shipped, shippingProblem: shipped ? shippingProblem(q, live) : '' };
   const [err, setErr] = useState<Record<string, string>>({});
   const [website, setWebsite] = useState('');
-  const [proof, setProof] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
   const grandTotal = total + (shipped ? q.extra : 0);
   // A shipping problem that only shows once the quote is back is a banner on the later steps, never a silent jump.
@@ -145,9 +146,10 @@ export default function CheckoutModal({ catalog, choice, okLines, badLines, tota
     try {
       await onSubmit(draft, proof, grandTotal, extras);
       // The order is placed; remembering the address is a courtesy, so a failure here only logs.
+      // The book is read again right before the write, so a failed earlier read cannot wipe it.
       if (shipped && book && uid && draft.postalCode && draft.customer.address) {
-        const list = rememberAddress(saved ?? [], { postalCode: draft.postalCode, address: draft.customer.address }, Date.now(), confirmationCode);
-        book.save(uid, list).catch((e) => console.error('[shop] save address', e));
+        rememberInBook(book, uid, { postalCode: draft.postalCode, address: draft.customer.address }, Date.now(), confirmationCode)
+          .catch((e) => console.error('[shop] save address', e));
       }
     }
     catch (x) { console.error(x); setErr({ submit: 'Could not send your order. Check your connection and try again.' }); }

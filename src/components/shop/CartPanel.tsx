@@ -46,7 +46,7 @@ export default function CartPanel({ currency, choice, okLines, badLines, total, 
         <span className="shop-cart-count shop-money">{count}</span>
         <span className="sr-only">Cart, {count} {count === 1 ? 'item' : 'items'}</span>
       </button>
-      <div id="shop-cart-body" className="shop-cart-body">
+      <div id="shop-cart-body" className="shop-cart-body" inert={!open}>
         <div className="shop-cart-head">
           <h2>Cart</h2>
           <span className="shop-hint">{choice.label}</span>
@@ -71,7 +71,7 @@ export default function CartPanel({ currency, choice, okLines, badLines, total, 
         {badLines.length > 0 && <button type="button" className="shop-btn" onClick={removeBad}>Remove unavailable items</button>}
         <div className="shop-total"><span>Items</span><span className="shop-money">{formatMoney(total, currency)}</span></div>
       </div>
-      <div className="shop-cart-foot">
+      <div className="shop-cart-foot" inert={!open}>
         <button type="button" className="shop-btn shop-btn-primary" disabled={blocked} onClick={onCheckout}>Checkout</button>
         <button type="button" className="shop-btn" onClick={() => onToggle(false)}>Keep shopping</button>
         {blocked && <span className="shop-hint">{empty ? 'Your cart is empty.' : 'Remove the unavailable items first.'}</span>}

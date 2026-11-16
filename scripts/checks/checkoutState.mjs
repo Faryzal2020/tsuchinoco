@@ -40,4 +40,11 @@ assert.equal(m.clampStep({ ...ok, step: 'payment' }, 'preorder', { needDay: fals
 assert.equal(m.clampStep({ ...ok, step: 'payment' }, 'preorder', { needDay: false, shipped: true, shippingProblem: '' }), 'payment');
 assert.equal(m.clampStep({ ...ok, step: 'fulfilment' }, 'preorder', { needDay: false, shipped: true, shippingProblem: 'x' }), 'fulfilment');
 assert.equal(m.clampStep({ ...mo, step: 'fulfilment' }, 'mail_order', { needDay: false, shipped: true, shippingProblem: 'x' }), 'details');
+// Values staff have since removed (a pick-up day, a payment choice) are dropped on restore.
+const stale = { ...ok, day: 'Day 3', pay: 'Cash' };
+const clean = m.sanitizeCheckout(stale, { days: ['Day 1', 'Day 2'], pays: ['Bank transfer', 'QRIS'], defaultPay: 'Bank transfer' });
+assert.equal(clean.day, ''); assert.equal(clean.pay, 'Bank transfer');
+const kept = m.sanitizeCheckout({ ...ok, day: 'Day 1', pay: 'QRIS' }, { days: ['Day 1'], pays: ['Bank transfer', 'QRIS'], defaultPay: 'Bank transfer' });
+assert.equal(kept.day, 'Day 1'); assert.equal(kept.pay, 'QRIS');
+assert.equal(m.sanitizeCheckout({ ...ok, pay: 'Cash' }, { days: [], pays: [], defaultPay: '' }).pay, '');
 console.log('checkoutState ok');
