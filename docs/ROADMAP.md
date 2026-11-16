@@ -264,6 +264,12 @@ S5. Customer order pages (built 2026-11-12, uncommitted, not deployed)
 **Later**: book the pickup through Biteship's order API so the waybill lands on the order and
 triggers the "Delivered" e-mail. It spends courier balance, so it is a separate decision.
 
+## Shop checkout — cart panel, step modal, saved addresses (built 2026-11-16)
+
+On `/shop/` the bottom cart bar is replaced by a cart panel that stays beside the catalogue (a drawer on the right on desktop, a bottom sheet with a puller on phones; collapsed, only a handle with the cart icon shows), and the one-page checkout by a dialog in up to four steps: pick up or mail (preorder lanes only), your details (with Google sign-in, saved addresses, postcode and Lion options when shipped), a read-only review, and payment, where the receipt is now required. Everything typed is kept in `sessionStorage` (`tsu.shop.checkout`), so a refresh or a closed dialog returns the customer to the same step; only the receipt file has to be chosen again. Addresses that a Google-signed-in customer ships to are kept in `customers/{uid}` (at most five, see `docs/DATA-MODEL.md`) and offered again on the next shipped order, with a "Forget" per address. Pure logic is checked by `node scripts/checks/addressBook.mjs` and `node scripts/checks/checkoutState.mjs`.
+
+**Deploying:** `firebase deploy --only firestore:rules` before hosting (the new `customers` rules), then the hosting build. Nothing server-side changes.
+
 ## Later and undecided
 
 - Customer-choice bundles ("any 3 keychains") on the form. Needs a decision on the data model first.

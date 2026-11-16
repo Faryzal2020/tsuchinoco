@@ -2,9 +2,10 @@
 /* eslint-disable @next/next/no-img-element -- thumbnails and banners are data or Storage URLs, next/image cannot optimise them */
 
 // The customer storefront. Pure UI: data comes in as props and orders leave through onSubmit,
-// so /shop/ (Firestore) and the localhost sandbox (sample data) render the same component.
+// so /shop/ (Firestore) and the localhost sandbox (sample data) render the same component. The cart is
+// CartPanel (a drawer or bottom sheet); checkout is CheckoutModal (four steps kept in sessionStorage).
 // Typography keeps three levels apart: item titles bold, variants quiet chips, prices monospace.
-// No icons anywhere; every control says what it does in words. Colours, sizes and shapes come from
+// No icons except the cart handle; every control says what it does in words. Colours, sizes and shapes come from
 // the catalogue's theme as CSS variables on the root, so staff restyle the shop without a deploy.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { OrderType, PublicForm, PublicPrices, PublishedStoreBlock, StoreBlockPosition, StoreCatalog, StoreProduct, StoreStatus, StoreTheme, Submission } from '@/types';
