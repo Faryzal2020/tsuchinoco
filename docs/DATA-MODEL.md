@@ -442,3 +442,16 @@ Written by the `/shop/` contact form: any signed-in user, anonymous included, ma
 - **`drainMailQueue`** (every 15 minutes): puts sends stuck in `sending` for 10 minutes back in the queue, then sends what is waiting in priority order. Plain mail goes up to 100 at a time through the batch endpoint. Every send carries an idempotency key, so a retry never sends twice.
 - **`contactOnCreate`** (trigger): files a contact-form message as a thread with one `contact` message. No e-mail is used, so it costs no quota.
 - **Order e-mails** (`functions/src/orders.ts`) are queued from `orders@` instead of sent directly.
+
+## Customers: saved shipping addresses (built 2026-11-16)
+
+### `customers/{uid}`
+
+Document id is the customer's Google auth uid. Written by the shop (`/shop/`) after a shipped order is placed and when the customer presses "Forget"; readable and writable only by that customer, signed in with Google. Nothing staff-side reads it. The merge rules are in `src/lib/addressBook.ts`.
+
+| Field | Type | Notes |
+|---|---|---|
+| `addresses` | list, max 5 | Most recently used first. Each `{ id, postalCode, address, lastUsedAt }`: `id` ≤ 40 chars, `postalCode` five digits not starting with 0, `address` ≤ 600 chars, `lastUsedAt` epoch ms. Two addresses are the same when postcode and text match ignoring case and spacing. |
+| `updatedAt` | number | Epoch ms of the last write. |
+
+No name, phone or e-mail is kept here: those stay the customer's contact details on each order. The customer's copy of an order (`customerOrders`) still carries no address.

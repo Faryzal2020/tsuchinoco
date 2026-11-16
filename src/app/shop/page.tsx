@@ -10,6 +10,7 @@ import { auth, db, isFirebaseConfigured, storage } from '@/lib/firebase';
 import { clean, COL } from '@/lib/repo';
 import Shop, { type ContactDraft, type ShopDraft } from '@/components/shop/Shop';
 import { useShippingDeps } from '@/lib/customerAuth';
+import { firestoreAddressBook } from '@/lib/customerAddresses';
 import { ORDER_HISTORY_PATH } from '@/lib/customerOrders';
 import type { PublicForm, PublicPrices, StoreCatalog, StoreStatus } from '@/types';
 
@@ -18,7 +19,9 @@ export default function ShopPage() {
   const [status, setStatus] = useState<StoreStatus | null>(null);
   const [prices, setPrices] = useState<PublicPrices | null>(null);
   const [docs, setDocs] = useState<Record<string, PublicForm | null>>({});
-  const shipping = useShippingDeps();
+  // The shop alone remembers addresses; the Forms page shares useShippingDeps without them.
+  const shippingDeps = useShippingDeps();
+  const shipping = useMemo(() => ({ ...shippingDeps, addressBook: firestoreAddressBook }), [shippingDeps]);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.location.hostname === 'admin.tsuchinoco.xyz') {

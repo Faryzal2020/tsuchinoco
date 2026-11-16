@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { parcelForForm } from './shipping';
 import type { OrderType, PublicForm, ShippingOption, ShippingQuoteResult } from '@/types';
+import type { AddressBook } from './addressBook';
 
 export interface ShippingCustomer { uid: string; name: string; email: string }
 
@@ -15,6 +16,8 @@ export interface ShippingDeps {
   customer: ShippingCustomer | null;
   signIn: () => Promise<ShippingCustomer | null>;
   quote: (req: { formId: string; postalCode: string; lines: Record<string, number> }) => Promise<ShippingQuoteResult>;
+  /** Saved shipping addresses per customer; the shop offers them again. Absent on the staff preview and the Forms. */
+  addressBook?: AddressBook;
 }
 
 export type QuoteState = 'signin' | 'postcode' | 'loading' | 'ready' | 'none' | 'error';

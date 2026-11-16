@@ -100,6 +100,36 @@ service cloud.firestore {
       allow list: if request.auth != null && resource.data.uid == request.auth.uid;
     }
 
+    // ---- Public exception 7: a customer's saved shipping addresses, written by the shop. ----
+    // Document id is the Google uid. Only that signed-in customer reads or writes it; staff never
+    // need it. At most five addresses, each bounded like a submission's address. Rules cannot loop,
+    // so the list is checked by index.
+    function validSavedAddress(a) {
+      return a is map && a.keys().hasOnly(['id', 'postalCode', 'address', 'lastUsedAt']) && a.keys().hasAll(['id', 'postalCode', 'address', 'lastUsedAt'])
+        && str(a.id, 40) && a.id.size() > 0
+        && a.postalCode is string && a.postalCode.matches('^[1-9][0-9]{4}$')
+        && str(a.address, 600) && a.address.size() > 0
+        && a.lastUsedAt is number;
+    }
+    function validCustomerDoc() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['addresses', 'updatedAt']) && d.keys().hasAll(['addresses', 'updatedAt'])
+        && d.updatedAt is number
+        && d.addresses is list && d.addresses.size() <= 5
+        && (d.addresses.size() < 1 || validSavedAddress(d.addresses[0]))
+        && (d.addresses.size() < 2 || validSavedAddress(d.addresses[1]))
+        && (d.addresses.size() < 3 || validSavedAddress(d.addresses[2]))
+        && (d.addresses.size() < 4 || validSavedAddress(d.addresses[3]))
+        && (d.addresses.size() < 5 || validSavedAddress(d.addresses[4]));
+    }
+    match /customers/{uid} {
+      allow read, delete: if request.auth != null && request.auth.uid == uid
+        && request.auth.token.firebase.sign_in_provider == 'google.com';
+      allow create, update: if request.auth != null && request.auth.uid == uid
+        && request.auth.token.firebase.sign_in_provider == 'google.com'
+        && validCustomerDoc();
+    }
+
     // ---- Public exception 5: the /shop/ contact form. ----
     // Any signed-in user (the shop signs in anonymously) creates one validated message; a function
     // files it into the shared inbox. Only staff read them.
@@ -146,8 +176,9 @@ service cloud.firestore {
       allow read, create: if isStaff();
     }
 
+    // customers holds saved addresses that only the customer reads.
     match /{collection}/{document=**} {
-      allow read, write: if isStaff() && !(collection in ['logs', 'priceHistory', 'contactSubmissions', 'mailThreads', 'mailMessages', 'mailQuota']);
+      allow read, write: if isStaff() && !(collection in ['logs', 'priceHistory', 'contactSubmissions', 'mailThreads', 'mailMessages', 'mailQuota', 'customers']);
     }
   }
 }
