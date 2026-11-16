@@ -886,7 +886,7 @@ export const DEFAULT_STOREFRONT: StorefrontSettings = {
   graceMinutes: 60,
   shopTitle: 'Tsuchinoco shop',
   shopIntro: 'Preorder for our next event, or order by mail between events.',
-  paymentText: 'Transfer the total to the account below and upload the receipt. We confirm every payment by hand.',
+  paymentText: 'Transfer the total to the chosen payment method, and then upload the receipt (Bukti Transfer).',
   paymentChoices: ['Bank transfer', 'QRIS'],
   couriers: [
     { name: 'JNE' },
