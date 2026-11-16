@@ -14,6 +14,7 @@ import { confirmationCode } from '@/lib/forms';
 import { formatMoney, titleCase } from '@/lib/format';
 import { shipRule, useShippingQuote, type ShippingDeps } from '@/lib/shippingQuote';
 import { Stepper, Text, ShopShipping, shippingProblem, type Line, type Priced } from './parts';
+import CartPanel, { PANEL_KEY } from './CartPanel';
 import { EMAIL_RE } from '@/lib/checkoutState';
 import './shop.css';
 
@@ -170,6 +171,22 @@ export default function Shop({ catalog, status, docs, prices, onSubmit, onContac
   const total = okLines.reduce((s, l) => s + l.qty * l.p!.price.unitPrice, 0);
   const [open, setOpen] = useState(false);
   const [done, setDone] = useState<{ code: string; lines: typeof okLines; total: number; label: string; extras: [string, number][] } | null>(null);
+  // The cart panel: open or collapsed, remembered for the tab. On a wide screen it opens itself the
+  // first time the cart gains an item; on a phone it stays as a puller until the customer asks.
+  const [panelOpen, setPanelOpen] = useState(false);
+  const sessionKV = () => { try { return preview ? undefined : window.sessionStorage; } catch { return undefined; } };
+  useEffect(() => { try { setPanelOpen(sessionKV()?.getItem(PANEL_KEY) === '1'); } catch { /* ignore */ } }, [preview]); // eslint-disable-line react-hooks/exhaustive-deps
+  const setPanel = (v: boolean) => { setPanelOpen(v); try { sessionKV()?.setItem(PANEL_KEY, v ? '1' : '0'); } catch { /* ignore */ } };
+  const prevCount = useRef(count);
+  useEffect(() => {
+    const was = prevCount.current;
+    prevCount.current = count;
+    if (was === 0 && count > 0 && !preview) {
+      try {
+        if (sessionKV()?.getItem(PANEL_KEY) === null && window.matchMedia('(min-width: 641px)').matches) setPanel(true);
+      } catch { /* ignore */ }
+    }
+  }, [count]); // eslint-disable-line react-hooks/exhaustive-deps
   const [contactOpen, setContactOpen] = useState(false);
   const theme = { ...DEFAULT_STORE_THEME, ...(catalog.theme ?? {}) };
 
@@ -245,11 +262,12 @@ export default function Shop({ catalog, status, docs, prices, onSubmit, onContac
           )}
           {blocksAt('bottom')}
 
-          {choice && lines.length > 0 && !open && (
-            <div className="shop-cartbar" role="region" aria-label="Cart">
-              <span><b>Cart</b> · {count} {count === 1 ? 'item' : 'items'} · <span className="shop-money">{formatMoney(total, catalog.currency)}</span>{badLines.length > 0 && <span className="shop-warn"> · {badLines.length} unavailable</span>}</span>
-              <button type="button" className="shop-btn shop-btn-primary" onClick={() => setOpen(true)}>Review and check out</button>
-            </div>
+          {choice && !open && (
+            <CartPanel
+              currency={catalog.currency} choice={choice} okLines={okLines} badLines={badLines} total={total} max={maxQty}
+              setQty={setQty} removeBad={() => { const n = { ...cart }; for (const l of badLines) delete n[l.key]; saveCart(n); }}
+              open={panelOpen} onToggle={setPanel} onCheckout={() => setOpen(true)} preview={preview}
+            />
           )}
           {choice && open && (
             <Checkout

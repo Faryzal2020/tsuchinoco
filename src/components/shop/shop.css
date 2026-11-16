@@ -153,9 +153,20 @@
 .shop-lightbox-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-weight: 600; padding: 0 4px; }
 .shop-lightbox-row .shop-btn { min-height: 36px; padding: 8px 14px; }
 
-/* Cart bar and checkout */
-.shop-cartbar { position: fixed; left: 0; right: 0; bottom: 0; max-width: none; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 12px max(16px, calc((100vw - 1180px) / 2)) calc(12px + env(safe-area-inset-bottom)); background: var(--s-surface); border-top: 1.5px solid var(--s-ink); }
-.shop.is-preview .shop-cartbar { position: sticky; padding-left: 16px; padding-right: 16px; }
+/* Cart panel: a drawer on the right (desktop) or a sheet from the bottom (phones, preview).
+   Collapsed, the panel is translated off-screen and only the handle shows. */
+.shop-cart { position: fixed; top: 0; right: 0; height: 100vh; width: min(360px, 92vw); max-width: none; margin: 0; z-index: 50; display: grid; grid-template-rows: minmax(0, 1fr) auto; background: var(--s-surface); color: var(--s-ink); border-left: 1.5px solid var(--s-ink); transform: translateX(100%); transition: transform .2s ease; }
+.shop-cart.is-open { transform: none; }
+.shop-cart-handle { position: absolute; right: 100%; top: 50%; transform: translateY(-50%); display: grid; gap: 2px; justify-items: center; padding: 10px 8px; font: 700 13px/1 var(--s-mono); background: var(--s-surface); color: var(--s-ink); border: 1.5px solid var(--s-ink); border-right: 0; border-radius: var(--s-r-sm) 0 0 var(--s-r-sm); box-shadow: -3px 3px 0 var(--s-ink); cursor: pointer; }
+.shop.shop-btn-flat .shop-cart-handle, .shop.shop-btn-pill .shop-cart-handle, .shop.shop-btn-outline .shop-cart-handle { box-shadow: none; }
+.shop-cart-icon { display: block; }
+.shop-cart-body { overflow: auto; padding: 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-content: start; }
+.shop-cart-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 10px; }
+.shop-cart-head h2 { font-size: 20px; font-weight: 700; margin: 0; }
+.shop-cart-foot { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); border-top: 1.5px solid var(--s-line); }
+.shop-cart-foot .shop-hint { grid-column: 1 / -1; }
+.shop-cart .shop-lines li { grid-template-columns: minmax(0, 1fr) auto; }
+.shop-cart .shop-line-total { grid-column: 1 / -1; text-align: right; min-width: 0; }
 .shop-warn { color: var(--s-warn); font-weight: 600; }
 .shop-checkout { background: var(--s-surface); border: 1.5px solid var(--s-ink); border-radius: var(--s-radius); padding: 18px; box-shadow: 0 4px 0 var(--s-ink); margin-top: 8px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 .shop.shop-btn-flat .shop-checkout, .shop.shop-btn-pill .shop-checkout, .shop.shop-btn-outline .shop-checkout { box-shadow: none; border-color: var(--s-line); border-width: var(--s-bw); }
@@ -209,9 +220,6 @@
   .shop-search { max-width: none; flex-basis: 100%; }
   .shop-chips-label { flex-basis: 100%; min-width: 0; }
   .shop-chip { min-height: 36px; padding: 8px 12px; }
-  .shop-cartbar { gap: 8px; }
-  .shop-cartbar > span { flex: 1 1 100%; }
-  .shop-cartbar .shop-btn { flex: 1 1 100%; }
   .shop-checkout { padding: 16px 14px; }
   .shop-checkout-head h2 { font-size: 20px; }
   .shop-thanks { padding: 18px 16px; }
@@ -221,7 +229,22 @@
   .shop-lines li { grid-template-columns: minmax(0, 1fr) auto; }
   .shop-line-total { grid-column: 1 / -1; text-align: left; min-width: 0; }
 }
-@media (prefers-reduced-motion: reduce) { .shop-btn { transition: none; } }
+/* The cart as a bottom sheet: phones, and the staff preview at any width (which has no window to fix to). */
+/* A transformed ancestor would anchor a fixed handle to itself, so the sheet never translates: closed,
+   it is an empty strip with only the handle showing; open, the body and footer appear. */
+@media (max-width: 640px) {
+  .shop-cart { top: auto; bottom: 0; left: 0; right: 0; width: auto; height: auto; max-height: 70vh; transform: none; transition: none; border-left: 0; border-top: 1.5px solid var(--s-ink); border-radius: var(--s-radius) var(--s-radius) 0 0; }
+  .shop-cart:not(.is-open) { background: transparent; border: 0; pointer-events: none; }
+  .shop-cart:not(.is-open) .shop-cart-body, .shop-cart:not(.is-open) .shop-cart-foot { display: none; }
+  .shop-cart-handle { pointer-events: auto; position: absolute; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); top: auto; left: auto; transform: none; grid-auto-flow: column; align-items: center; gap: 6px; padding: 8px 12px; border-right: 1.5px solid var(--s-ink); border-radius: var(--s-r-sm); box-shadow: 0 3px 0 var(--s-ink); }
+  .shop-cart.is-open .shop-cart-handle { bottom: 100%; border-bottom: 0; border-radius: var(--s-r-sm) var(--s-r-sm) 0 0; box-shadow: none; }
+}
+.shop.is-preview .shop-cart { position: sticky; top: auto; bottom: 0; left: 0; right: 0; width: auto; height: auto; max-height: 70vh; transform: none; transition: none; border-left: 0; border-top: 1.5px solid var(--s-ink); border-radius: var(--s-radius) var(--s-radius) 0 0; margin-top: 16px; }
+.shop.is-preview .shop-cart:not(.is-open) { background: transparent; border: 0; pointer-events: none; }
+.shop.is-preview .shop-cart:not(.is-open) .shop-cart-body, .shop.is-preview .shop-cart:not(.is-open) .shop-cart-foot { display: none; }
+.shop.is-preview .shop-cart-handle { pointer-events: auto; position: absolute; right: 12px; bottom: 12px; top: auto; left: auto; transform: none; grid-auto-flow: column; align-items: center; gap: 6px; padding: 8px 12px; border-right: 1.5px solid var(--s-ink); border-radius: var(--s-r-sm); box-shadow: 0 3px 0 var(--s-ink); }
+.shop.is-preview .shop-cart.is-open .shop-cart-handle { bottom: 100%; border-bottom: 0; border-radius: var(--s-r-sm) var(--s-r-sm) 0 0; box-shadow: none; }
+@media (prefers-reduced-motion: reduce) { .shop-btn, .shop-cart { transition: none; } }
 
 /* Shipping at checkout */
 .shop-breakdown { display: grid; gap: 4px; font-size: 14px; }
