@@ -36,7 +36,7 @@ export function shippingProblem(q: ShippingQuoteHook, live: boolean): string {
 }
 
 /** Google sign-in, postcode and the Lion services for a shipped order. */
-export function ShopShipping({ q, live, currency, error }: { q: ShippingQuoteHook; live: boolean; currency: string; error?: string }) {
+export function ShopShipping({ q, live, currency, error, onPostal = q.setPostal }: { q: ShippingQuoteHook; live: boolean; currency: string; error?: string; onPostal?: (v: string) => void }) {
   if (!live) return <p className="shop-hint">Customers sign in with Google here and get Lion Parcel prices for their postcode. The preview cannot fetch prices.</p>;
   if (q.state === 'signin') {
     return (
@@ -51,7 +51,7 @@ export function ShopShipping({ q, live, currency, error }: { q: ShippingQuoteHoo
     <div className="shop-shipping">
       <div className="shop-field shop-postcode">
         <label htmlFor="shop-postcode">Postcode</label>
-        <input id="shop-postcode" inputMode="numeric" autoComplete="postal-code" maxLength={5} placeholder="e.g. 16920" value={q.postal} onChange={(e) => q.setPostal(e.target.value)} aria-invalid={q.state === 'postcode' && !!error} />
+        <input id="shop-postcode" inputMode="numeric" autoComplete="postal-code" maxLength={5} placeholder="e.g. 16920" value={q.postal} onChange={(e) => onPostal(e.target.value)} aria-invalid={q.state === 'postcode' && !!error} />
       </div>
       {q.state === 'loading' && <p className="shop-hint" aria-live="polite">Checking Lion Parcel prices…</p>}
       {q.state === 'none' && <p className="shop-error">Lion Parcel does not deliver to this postcode. Check it, or contact us.</p>}

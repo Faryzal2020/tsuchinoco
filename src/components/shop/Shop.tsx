@@ -10,12 +10,12 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { OrderType, PublicForm, PublicPrices, PublishedStoreBlock, StoreBlockPosition, StoreCatalog, StoreProduct, StoreStatus, StoreTheme, Submission } from '@/types';
 import { DEFAULT_STORE_THEME } from '@/types';
 import { storePrice, storeState, type StoreChoice, type StorePrice } from '@/lib/store';
-import { confirmationCode } from '@/lib/forms';
 import { formatMoney, titleCase } from '@/lib/format';
-import { shipRule, useShippingQuote, type ShippingDeps } from '@/lib/shippingQuote';
-import { Stepper, Text, ShopShipping, shippingProblem, type Line, type Priced } from './parts';
+import type { ShippingDeps } from '@/lib/shippingQuote';
+import { Stepper, Text, type Line, type Priced } from './parts';
 import CartPanel, { PANEL_KEY } from './CartPanel';
-import { EMAIL_RE } from '@/lib/checkoutState';
+import CheckoutModal from './CheckoutModal';
+import { EMAIL_RE, clearCheckout, emptyCheckout, readCheckout, writeCheckout, type CheckoutState } from '@/lib/checkoutState';
 import './shop.css';
 
 export type ShopDraft = Omit<Submission, 'id'>;
@@ -169,7 +169,22 @@ export default function Shop({ catalog, status, docs, prices, onSubmit, onContac
   const badLines = lines.filter((l) => !l.p!.orderable);
   const count = okLines.reduce((s, l) => s + l.qty, 0);
   const total = okLines.reduce((s, l) => s + l.qty * l.p!.price.unitPrice, 0);
-  const [open, setOpen] = useState(false);
+  // Checkout progress, kept in sessionStorage per lane so a refresh returns to the same step.
+  const defaultPay = catalog.paymentChoices[0] ?? '';
+  const [ck, setCk] = useState<CheckoutState>(() => emptyCheckout('', 'mail_order', defaultPay));
+  const laneKey = choice?.lane.id ?? '';
+  const laneKind = choice?.lane.kind ?? 'mail_order';
+  useEffect(() => {
+    if (!laneKey) { setCk(emptyCheckout('', 'mail_order', defaultPay)); return; }
+    let kv: Storage | undefined;
+    try { kv = preview ? undefined : window.sessionStorage; } catch { kv = undefined; }
+    setCk(readCheckout(kv, laneKey, laneKind, defaultPay));
+  }, [laneKey, laneKind, defaultPay, preview]);
+  const patchCheckout = (p: Partial<CheckoutState>) => setCk((s) => {
+    const n = { ...s, ...p };
+    if (!preview) { try { writeCheckout(window.sessionStorage, n); } catch { /* ignore */ } }
+    return n;
+  });
   const [done, setDone] = useState<{ code: string; lines: typeof okLines; total: number; label: string; extras: [string, number][] } | null>(null);
   // The cart panel: open or collapsed, remembered for the tab. On a wide screen it opens itself the
   // first time the cart gains an item; on a phone it stays as a puller until the customer asks.
@@ -262,24 +277,23 @@ export default function Shop({ catalog, status, docs, prices, onSubmit, onContac
           )}
           {blocksAt('bottom')}
 
-          {choice && !open && (
+          {choice && (
             <CartPanel
               currency={catalog.currency} choice={choice} okLines={okLines} badLines={badLines} total={total} max={maxQty}
               setQty={setQty} removeBad={() => { const n = { ...cart }; for (const l of badLines) delete n[l.key]; saveCart(n); }}
-              open={panelOpen} onToggle={setPanel} onCheckout={() => setOpen(true)} preview={preview}
+              open={panelOpen} onToggle={setPanel} onCheckout={() => patchCheckout({ open: true })} preview={preview}
             />
           )}
-          {choice && open && (
-            <Checkout
-              catalog={catalog} choice={choice} okLines={okLines} badLines={badLines} total={total} max={maxQty}
-              setQty={setQty} removeBad={() => { const n = { ...cart }; for (const l of badLines) delete n[l.key]; saveCart(n); }}
-              onClose={() => setOpen(false)}
-              deps={shipping}
+          {choice && ck.open && ck.laneId === choice.lane.id && (
+            <CheckoutModal
+              catalog={catalog} choice={choice} okLines={okLines} badLines={badLines} total={total}
+              deps={shipping} preview={preview} state={ck} patch={patchCheckout}
               onSubmit={async (draft, proof, grandTotal, extras) => {
                 await onSubmit(choice, draft, proof);
                 setDone({ code: draft.code, lines: okLines, total: grandTotal, label: choice.label, extras });
                 saveCart({});
-                setOpen(false);
+                if (!preview) { try { clearCheckout(window.sessionStorage); } catch { /* ignore */ } }
+                setCk(emptyCheckout(choice.lane.id, choice.lane.kind, defaultPay));
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
             />
@@ -444,170 +458,6 @@ function ProductCard({ product: p, priced, cart, setQty, choice, currency, max, 
         </div>
       </div>
     </article>
-  );
-}
-
-function Checkout({ catalog, choice, okLines, badLines, total, max, setQty, removeBad, onClose, onSubmit, deps }: {
-  catalog: StoreCatalog; choice: StoreChoice; okLines: Line[]; badLines: Line[]; total: number; max: number;
-  setQty: (k: string, q: number) => void; removeBad: () => void; onClose: () => void; onSubmit: (d: ShopDraft, proof: File | undefined, grandTotal: number, extras: [string, number][]) => Promise<void>;
-  deps?: ShippingDeps;
-}) {
-  const isPre = choice.lane.kind === 'preorder';
-  const days = choice.lane.pickupDays;
-  const [c, setC] = useState({ name: '', email: '', phone: '', address: '', notes: '', website: '' });
-  const [ful, setFul] = useState<'pickup' | 'mail'>(isPre ? 'pickup' : 'mail');
-  const [day, setDay] = useState('');
-  const [pay, setPay] = useState(catalog.paymentChoices[0] ?? '');
-  const [proof, setProof] = useState<File | null>(null);
-  const [err, setErr] = useState<Record<string, string>>({});
-  const [sending, setSending] = useState(false);
-  const fulfilment = isPre ? ful : 'mail';
-  const cartLines = useMemo(() => Object.fromEntries(okLines.map((l) => [l.key, l.qty])), [okLines]);
-  const q = useShippingQuote({
-    deps, form: choice.doc, lines: cartLines, active: fulfilment === 'mail' && okLines.length > 0,
-    onSignedIn: (u) => setC((x) => ({ ...x, name: x.name || u.name, email: x.email || u.email })),
-  });
-  const shipped = fulfilment === 'mail';
-  const grandTotal = total + (shipped ? q.extra : 0);
-  const top = useRef<HTMLElement>(null);
-  useEffect(() => { top.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, []);
-
-  const submit = async (ev: React.FormEvent) => {
-    ev.preventDefault();
-    const e: Record<string, string> = {};
-    if (!c.name.trim()) e.name = 'Required';
-    if (!c.email.trim()) e.email = 'Required'; else if (!EMAIL_RE.test(c.email.trim())) e.email = 'That e-mail address does not look right.';
-    if (!c.phone.trim()) e.phone = 'Required';
-    if (fulfilment === 'pickup' && days.length > 0 && !day) e.day = 'Choose a day';
-    if (fulfilment === 'mail' && !c.address.trim()) e.address = 'Required for shipping';
-    if (shipped) {
-      const why = shippingProblem(q, !!deps);
-      if (why) e.ship = why;
-    }
-    if (okLines.length === 0) e.lines = 'Your cart is empty.';
-    if (badLines.length > 0) e.lines = 'Remove the unavailable items first.';
-    setErr(e);
-    if (Object.keys(e).length > 0) return;
-    if (c.website) return; // honeypot
-    const seen = Object.fromEntries(okLines.filter((l) => l.p!.price.entryId).map((l) => [l.key, l.p!.price.entryId!]));
-    const draft: ShopDraft = {
-      formId: choice.doc.formId, eventId: choice.doc.eventId, batchId: choice.doc.batchId, version: choice.doc.version, code: confirmationCode(),
-      customer: { name: c.name.trim(), email: c.email.trim(), phone: c.phone.trim(), ...(fulfilment === 'mail' ? { address: c.address.trim() } : {}) },
-      ...(shipped && q.result && q.option ? { postalCode: q.result.postalCode, shipping: { quoteId: q.result.quoteId, service: q.option.service }, customerUid: deps?.customer?.uid } : {}),
-      fulfilment, ...(fulfilment === 'pickup' && day ? { pickupDay: day } : {}),
-      notes: c.notes.trim(), lines: Object.fromEntries(okLines.map((l) => [l.key, l.qty])), submittedAt: Date.now(), status: 'new',
-      orderType: choice.lane.kind, seen, ...(pay ? { paymentMethod: pay } : {}),
-    };
-    setSending(true);
-    // Shipping lines for the thank-you page, in the order the checkout showed them.
-    const extras: [string, number][] = shipped && q.option && q.result
-      ? ([[`Shipping · ${q.option.name} · ${q.result.billedKg} kg`, q.option.price], ['Handling', q.result.handlingFee], ['Packaging', q.result.packagingFee]] as [string, number][]).filter(([, v]) => v > 0)
-      : [];
-    try { await onSubmit(draft, proof ?? undefined, grandTotal, extras); }
-    catch (x) { console.error(x); setErr({ submit: 'Could not send your order. Check your connection and try again.' }); }
-    finally { setSending(false); }
-  };
-
-  return (
-    <section ref={top} className="shop-checkout" aria-label="Checkout">
-      <div className="shop-checkout-head">
-        <h2>Your {isPre ? 'preorder' : 'mail order'}</h2>
-        <button type="button" className="shop-btn" onClick={onClose}>Keep shopping</button>
-      </div>
-      <p className="shop-hint">{choice.label}. {choice.detail}</p>
-
-      <ul className="shop-lines">
-        {okLines.map((l) => (
-          <li key={l.key}>
-            <div><b>{l.p!.product.name}</b>{l.p!.variant.name && <span className="shop-line-variant"> · {l.p!.variant.name}</span>}<div className="shop-hint shop-money">{formatMoney(l.p!.price.unitPrice, catalog.currency)} each</div></div>
-            <Stepper value={l.qty} max={max} onChange={(v) => setQty(l.key, v)} label={l.p!.product.name} />
-            <span className="shop-money shop-line-total">{formatMoney(l.qty * l.p!.price.unitPrice, catalog.currency)}</span>
-          </li>
-        ))}
-        {badLines.map((l) => (
-          <li key={l.key} className="is-out">
-            <div><b>{l.p!.product.name}</b>{l.p!.variant.name && <span className="shop-line-variant"> · {l.p!.variant.name}</span>}<div className="shop-warn">Not available for this order</div></div>
-            <button type="button" className="shop-link" onClick={() => setQty(l.key, 0)}>Remove</button>
-          </li>
-        ))}
-      </ul>
-      {badLines.length > 0 && <button type="button" className="shop-btn" onClick={removeBad}>Remove unavailable items</button>}
-      {shipped && q.option && q.result ? (
-        <div className="shop-breakdown">
-          <div><span>Items</span><span className="shop-money">{formatMoney(total, catalog.currency)}</span></div>
-          <div><span>Shipping · {q.option.name} · {q.result.billedKg} kg</span><span className="shop-money">{formatMoney(q.option.price, catalog.currency)}</span></div>
-          {q.result.handlingFee > 0 && <div><span>Handling</span><span className="shop-money">{formatMoney(q.result.handlingFee, catalog.currency)}</span></div>}
-          {q.result.packagingFee > 0 && <div><span>Packaging</span><span className="shop-money">{formatMoney(q.result.packagingFee, catalog.currency)}</span></div>}
-        </div>
-      ) : shipped ? <p className="shop-hint">Shipping is added once you enter your postcode below.</p> : null}
-      <div className="shop-total"><span>Total</span><span className="shop-money">{formatMoney(grandTotal, catalog.currency)}</span></div>
-      {err.lines && <p className="shop-error">{err.lines}</p>}
-
-      <form onSubmit={submit} noValidate className="shop-form">
-        <fieldset>
-          <legend>Your details</legend>
-          <Text id="shop-name" label="Name" value={c.name} onChange={(v) => setC({ ...c, name: v })} error={err.name} autoComplete="name" />
-          <Text id="shop-email" label="E-mail" type="email" value={c.email} onChange={(v) => setC({ ...c, email: v })} error={err.email} autoComplete="email" />
-          <Text id="shop-phone" label="Phone (WhatsApp preferred)" type="tel" value={c.phone} onChange={(v) => setC({ ...c, phone: v })} error={err.phone} autoComplete="tel" />
-        </fieldset>
-
-        <fieldset>
-          <legend>{isPre ? 'Pick up or ship' : 'Shipping'}</legend>
-          {isPre && (
-            <div className="shop-radios">
-              <label className={`shop-option ${ful === 'pickup' ? 'is-on' : ''}`}><input type="radio" name="ful" checked={ful === 'pickup'} onChange={() => setFul('pickup')} /><b>Pick up at the booth</b><span>At {choice.lane.eventName}</span></label>
-              <label className={`shop-option ${ful === 'mail' ? 'is-on' : ''}`}><input type="radio" name="ful" checked={ful === 'mail'} onChange={() => setFul('mail')} /><b>Ship after the event</b><span>Pay shipping now; it is sent after the event ends</span></label>
-            </div>
-          )}
-          {fulfilment === 'pickup' && days.length > 0 && (
-            <div className="shop-field">
-              <label htmlFor="shop-day">Pick-up day</label>
-              <select id="shop-day" value={day} onChange={(e) => setDay(e.target.value)} aria-invalid={!!err.day}>
-                <option value="">Choose a day</option>
-                {days.map((d) => <option key={d} value={d}>{d}</option>)}
-              </select>
-              {err.day && <span className="shop-error">{err.day}</span>}
-            </div>
-          )}
-          {fulfilment === 'mail' && <ShopShipping q={q} live={!!deps} currency={catalog.currency} error={err.ship} />}
-          {fulfilment === 'mail' && (q.state !== 'signin' || !deps) && (
-            <div className="shop-field">
-              <label htmlFor="shop-address">Shipping address</label>
-              <textarea id="shop-address" rows={3} value={c.address} onChange={(e) => setC({ ...c, address: e.target.value })} aria-invalid={!!err.address} placeholder="Street and number, RT/RW, kelurahan, kecamatan, city" autoComplete="street-address" />
-              {err.address && <span className="shop-error">{err.address}</span>}
-            </div>
-          )}
-          {fulfilment === 'mail' && <p className="shop-hint">{shipRule(choice.lane.kind)}</p>}
-          {!isPre && <p className="shop-hint">Mail orders ship after current events end. Some items may still be in production; we will tell you if yours is.</p>}
-        </fieldset>
-
-        <fieldset>
-          <legend>Payment</legend>
-          <div className="shop-radios">
-            {catalog.paymentChoices.map((p) => (
-              <label key={p} className={`shop-option ${pay === p ? 'is-on' : ''}`}><input type="radio" name="pay" checked={pay === p} onChange={() => setPay(p)} /><b>{p}</b></label>
-            ))}
-            <label className="shop-option is-disabled"><input type="radio" name="pay" disabled /><b>Online payment</b><span>Coming soon</span></label>
-          </div>
-          {catalog.paymentText && <p className="shop-paytext">{catalog.paymentText}</p>}
-          <div className="shop-field">
-            <label htmlFor="shop-proof">Receipt (optional)</label>
-            <input id="shop-proof" type="file" accept="image/*,application/pdf" onChange={(e) => setProof(e.target.files?.[0] ?? null)} />
-            <span className="shop-hint">{isPre ? 'Preorders must be paid before the event.' : 'We ship after the payment is confirmed.'} JPG, PNG or PDF, up to 10 MB.</span>
-          </div>
-        </fieldset>
-
-        <div className="shop-field">
-          <label htmlFor="shop-notes">Notes (optional)</label>
-          <textarea id="shop-notes" rows={2} value={c.notes} onChange={(e) => setC({ ...c, notes: e.target.value })} />
-        </div>
-        <div className="shop-honeypot" aria-hidden="true"><label>Website <input tabIndex={-1} autoComplete="off" value={c.website} onChange={(e) => setC({ ...c, website: e.target.value })} /></label></div>
-        {err.submit && <p className="shop-error">{err.submit}</p>}
-        <button type="submit" className="shop-btn shop-btn-primary shop-btn-wide" disabled={sending || okLines.length === 0}>
-          {sending ? 'Sending…' : `Place ${isPre ? 'preorder' : 'mail order'} · ${formatMoney(grandTotal, catalog.currency)}`}
-        </button>
-      </form>
-    </section>
   );
 }
 

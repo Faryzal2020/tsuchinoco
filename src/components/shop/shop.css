@@ -171,7 +171,7 @@
 .shop-checkout { background: var(--s-surface); border: 1.5px solid var(--s-ink); border-radius: var(--s-radius); padding: 18px; box-shadow: 0 4px 0 var(--s-ink); margin-top: 8px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 .shop.shop-btn-flat .shop-checkout, .shop.shop-btn-pill .shop-checkout, .shop.shop-btn-outline .shop-checkout { box-shadow: none; border-color: var(--s-line); border-width: var(--s-bw); }
 .shop-checkout-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
-.shop-checkout h2, .shop-thanks h2 { font-size: 22px; font-weight: 700; margin: 0; }
+.shop-checkout h2, .shop-thanks h2, .shop-modal h2 { font-size: 22px; font-weight: 700; margin: 0; }
 .shop-hint { color: var(--s-ink-2); font-size: 13px; margin: 0; }
 .shop-lines { list-style: none; margin: 0; padding: 0; display: grid; }
 .shop-lines li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px 14px; padding: 10px 0; border-top: 1px solid var(--s-line); }
@@ -200,6 +200,26 @@
 .shop-honeypot { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
 .shop-empty { color: var(--s-ink-2); }
 
+/* Checkout modal and its step line. */
+.shop-modal { border: 0; padding: 0; background: transparent; width: min(96vw, 680px); max-width: none; max-height: 94vh; margin: auto; color: var(--s-ink); font: 15px/1.5 var(--s-sans); }
+.shop-modal::backdrop { background: rgba(20, 18, 14, .72); }
+.shop-modal-body { background: var(--s-surface); border: 1.5px solid var(--s-ink); border-radius: var(--s-radius); padding: 18px; box-shadow: 0 4px 0 var(--s-ink); overflow: auto; max-height: calc(94vh - 8px); box-sizing: border-box; align-content: start; }
+.shop.shop-btn-flat .shop-modal-body, .shop.shop-btn-pill .shop-modal-body, .shop.shop-btn-outline .shop-modal-body { box-shadow: none; border-color: var(--s-line); border-width: var(--s-bw); }
+.shop-modal-nav { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.shop-dots { display: flex; align-items: center; list-style: none; margin: 0 0 4px; padding: 4px 2px; }
+.shop-dots li { display: flex; align-items: center; flex: 1; min-width: 0; }
+.shop-dots li:first-child { flex: 0; }
+.shop-dots li:not(:first-child)::before { content: ''; flex: 1; height: 2px; background: var(--s-line); }
+.shop-dots li.is-reached:not(:first-child)::before { background: var(--s-blue); }
+.shop-dot { display: block; flex: none; width: 20px; height: 20px; padding: 0; border: 2px solid var(--s-line); border-radius: 50%; background: var(--s-surface); box-sizing: border-box; }
+.shop-dot.is-done { background: var(--s-blue); border-color: var(--s-blue); cursor: pointer; }
+.shop-dot.is-current { background: var(--s-blue); border-color: var(--s-blue); box-shadow: 0 0 0 3px var(--s-blue-soft); }
+.shop-review { display: grid; gap: 12px; }
+.shop-review-block { border: 1.5px solid var(--s-line); border-radius: var(--s-r-sm); padding: 12px 14px; }
+.shop-review-block p { margin: 6px 0 0; }
+.shop-review-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.shop-review-head h3 { margin: 0; font-size: 15px; font-weight: 700; }
+
 .shop-thanks { background: var(--s-surface); border: var(--s-bw) solid var(--s-line); border-radius: var(--s-radius); padding: 22px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; max-width: 640px; }
 .shop-code-label { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--s-ink-2); }
 .shop-code { font: 700 30px/1 var(--s-mono); letter-spacing: .08em; }
@@ -222,6 +242,8 @@
   .shop-chip { min-height: 36px; padding: 8px 12px; }
   .shop-checkout { padding: 16px 14px; }
   .shop-checkout-head h2 { font-size: 20px; }
+  .shop-modal { width: 100vw; max-height: 100vh; margin: 0; }
+  .shop-modal-body { border-radius: 0; border-left: 0; border-right: 0; min-height: 100vh; max-height: 100vh; padding: 16px 14px calc(16px + env(safe-area-inset-bottom)); }
   .shop-thanks { padding: 18px 16px; }
   .shop-code { font-size: 26px; overflow-wrap: anywhere; }
 }
