@@ -7,12 +7,14 @@
 // No icons anywhere; every control says what it does in words. Colours, sizes and shapes come from
 // the catalogue's theme as CSS variables on the root, so staff restyle the shop without a deploy.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type { OrderType, PublicForm, PublicPrices, PublishedStoreBlock, StoreBlockPosition, StoreCatalog, StoreProduct, StoreStatus, StoreTheme, StoreVariant, Submission } from '@/types';
+import type { OrderType, PublicForm, PublicPrices, PublishedStoreBlock, StoreBlockPosition, StoreCatalog, StoreProduct, StoreStatus, StoreTheme, Submission } from '@/types';
 import { DEFAULT_STORE_THEME } from '@/types';
 import { storePrice, storeState, type StoreChoice, type StorePrice } from '@/lib/store';
 import { confirmationCode } from '@/lib/forms';
 import { formatMoney, titleCase } from '@/lib/format';
-import { shipRule, useShippingQuote, type ShippingDeps, type ShippingQuoteHook } from '@/lib/shippingQuote';
+import { shipRule, useShippingQuote, type ShippingDeps } from '@/lib/shippingQuote';
+import { Stepper, Text, ShopShipping, shippingProblem, type Line, type Priced } from './parts';
+import { EMAIL_RE } from '@/lib/checkoutState';
 import './shop.css';
 
 export type ShopDraft = Omit<Submission, 'id'>;
@@ -39,7 +41,6 @@ export interface ShopProps {
   preview?: boolean;
 }
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CART_KEY = 'tsu.shop.cart';
 const LANE_KEY = 'tsu.shop.lane';
 const read = (k: string) => { try { return localStorage.getItem(k) ?? ''; } catch { return ''; } };
@@ -75,8 +76,6 @@ export function shopStyle(theme: StoreCatalog['theme']): React.CSSProperties {
   }
   return style as React.CSSProperties;
 }
-
-interface Priced { variant: StoreVariant; product: StoreProduct; price: StorePrice; orderable: boolean }
 
 export default function Shop({ catalog, status, docs, prices, onSubmit, onContact, now, notice, preview, shipping, ordersHref }: ShopProps) {
   const [clock, setClock] = useState(() => now ?? Date.now());
@@ -430,18 +429,6 @@ function ProductCard({ product: p, priced, cart, setQty, choice, currency, max, 
   );
 }
 
-function Stepper({ value, max, onChange, label }: { value: number; max: number; onChange: (v: number) => void; label: string }) {
-  return (
-    <div className="shop-stepper" role="group" aria-label={`Quantity of ${label}`}>
-      <button type="button" onClick={() => onChange(value - 1)} aria-label="One less">−</button>
-      <span className="shop-money" aria-live="polite">{value}</span>
-      <button type="button" onClick={() => onChange(value + 1)} disabled={value >= max} aria-label="One more">+</button>
-    </div>
-  );
-}
-
-interface Line { key: string; qty: number; p?: Priced }
-
 function Checkout({ catalog, choice, okLines, badLines, total, max, setQty, removeBad, onClose, onSubmit, deps }: {
   catalog: StoreCatalog; choice: StoreChoice; okLines: Line[]; badLines: Line[]; total: number; max: number;
   setQty: (k: string, q: number) => void; removeBad: () => void; onClose: () => void; onSubmit: (d: ShopDraft, proof: File | undefined, grandTotal: number, extras: [string, number][]) => Promise<void>;
@@ -670,66 +657,6 @@ function ContactForm({ onSend, onClose }: { onSend: (c: ContactDraft) => Promise
         <button type="submit" className="shop-btn shop-btn-primary shop-btn-wide" disabled={sending}>{sending ? 'Sending…' : 'Send message'}</button>
       </form>
     </section>
-  );
-}
-
-/** Why a shipped order cannot be placed yet, or '' when the shipping is ready. */
-function shippingProblem(q: ShippingQuoteHook, live: boolean): string {
-  if (!live) return 'Shipping prices only work on the live shop.';
-  switch (q.state) {
-    case 'signin': return 'Sign in with Google to have your order shipped.';
-    case 'postcode': return 'Enter your five-digit postcode.';
-    case 'loading': return 'Wait a moment for the shipping price.';
-    case 'none': return 'Lion Parcel does not deliver to this postcode.';
-    case 'error': return q.error || 'Could not get shipping prices.';
-    default: return q.option ? '' : 'Choose a shipping service.';
-  }
-}
-
-/** Google sign-in, postcode and the Lion services for a shipped order. */
-function ShopShipping({ q, live, currency, error }: { q: ShippingQuoteHook; live: boolean; currency: string; error?: string }) {
-  if (!live) return <p className="shop-hint">Customers sign in with Google here and get Lion Parcel prices for their postcode. The preview cannot fetch prices.</p>;
-  if (q.state === 'signin') {
-    return (
-      <div className="shop-signin">
-        <p><b>Sign in with Google to ship this order.</b> You can follow it later from your order page. Picking up at the booth needs no sign-in.</p>
-        <button type="button" className="shop-btn" onClick={q.signIn} disabled={q.signingIn}>{q.signingIn ? 'Signing in…' : 'Sign in with Google'}</button>
-        {(q.error || error) && <span className="shop-error">{q.error || error}</span>}
-      </div>
-    );
-  }
-  return (
-    <div className="shop-shipping">
-      <div className="shop-field shop-postcode">
-        <label htmlFor="shop-postcode">Postcode</label>
-        <input id="shop-postcode" inputMode="numeric" autoComplete="postal-code" maxLength={5} placeholder="e.g. 16920" value={q.postal} onChange={(e) => q.setPostal(e.target.value)} aria-invalid={q.state === 'postcode' && !!error} />
-      </div>
-      {q.state === 'loading' && <p className="shop-hint" aria-live="polite">Checking Lion Parcel prices…</p>}
-      {q.state === 'none' && <p className="shop-error">Lion Parcel does not deliver to this postcode. Check it, or contact us.</p>}
-      {q.state === 'error' && <p className="shop-error">{q.error} <button type="button" className="shop-link" onClick={q.retry}>Try again</button></p>}
-      {q.state === 'ready' && q.result && (
-        <div className="shop-radios" role="radiogroup" aria-label="Shipping service">
-          {q.result.options.map((o) => (
-            <label key={o.service} className={`shop-option ${q.option?.service === o.service ? 'is-on' : ''}`}>
-              <input type="radio" name="ship" checked={q.option?.service === o.service} onChange={() => q.setService(o.service)} />
-              <b>{o.name} · <span className="shop-money">{formatMoney(o.price, currency)}</span></b>
-              <span>{o.etd ? `${o.etd} after it ships` : 'Delivery time varies'} · charged as {q.result!.billedKg} kg</span>
-            </label>
-          ))}
-        </div>
-      )}
-      {error && q.state !== 'loading' && q.state !== 'none' && q.state !== 'error' && <span className="shop-error">{error}</span>}
-    </div>
-  );
-}
-
-function Text({ id, label, value, onChange, error, type = 'text', autoComplete }: { id: string; label: string; value: string; onChange: (v: string) => void; error?: string; type?: string; autoComplete?: string }) {
-  return (
-    <div className="shop-field">
-      <label htmlFor={id}>{label}</label>
-      <input id={id} type={type} value={value} onChange={(e) => onChange(e.target.value)} aria-invalid={!!error} autoComplete={autoComplete} />
-      {error && <span className="shop-error">{error}</span>}
-    </div>
   );
 }
 
