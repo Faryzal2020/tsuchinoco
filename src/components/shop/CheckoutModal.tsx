@@ -11,6 +11,7 @@ import { confirmationCode } from '@/lib/forms';
 import { formatMoney } from '@/lib/format';
 import { shipRule, useShippingQuote, type ShippingDeps } from '@/lib/shippingQuote';
 import { clampStep, detailsProblems, stepsFor, type CheckoutState, type StepChecks, type StepId } from '@/lib/checkoutState';
+import { findAddress, forgetAddress, rememberAddress, type SavedAddress } from '@/lib/addressBook';
 import { ShopShipping, Text, shippingProblem, type Line } from './parts';
 import type { ShopDraft } from './Shop';
 
@@ -68,6 +69,25 @@ export default function CheckoutModal({ catalog, choice, okLines, badLines, tota
   const optService = q.option?.service ?? '';
   useEffect(() => { if (optService && optService !== state.service) patch({ service: optService }); }, [optService]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Saved addresses, loaded once per signed-in customer while the dialog is open. Null: none to offer.
+  const book = deps?.addressBook;
+  const uid = deps?.customer?.uid;
+  const [saved, setSaved] = useState<SavedAddress[] | null>(null);
+  useEffect(() => {
+    if (!book || !uid) { setSaved(null); return; }
+    let on = true;
+    book.load(uid).then((l) => { if (on) setSaved(l); }).catch((e) => { console.error('[shop] addresses', e); if (on) setSaved([]); });
+    return () => { on = false; };
+  }, [book, uid]);
+  const pickSaved = (a: SavedAddress | null) => { setPostal(a?.postalCode ?? ''); patch({ address: a?.address ?? '' }); };
+  const forget = (a: SavedAddress) => {
+    if (!book || !uid || !saved) return;
+    const next = forgetAddress(saved, a.id);
+    setSaved(next);
+    book.save(uid, next).catch((e) => console.error('[shop] forget address', e));
+  };
+  const chosenSaved = saved ? findAddress(saved, state.postal, state.address) : undefined;
+
   const checks: StepChecks = { needDay: state.fulfilment === 'pickup' && days.length > 0, shipped, shippingProblem: shipped ? shippingProblem(q, live) : '' };
   const [err, setErr] = useState<Record<string, string>>({});
   const [website, setWebsite] = useState('');
@@ -122,7 +142,14 @@ export default function CheckoutModal({ catalog, choice, okLines, badLines, tota
       : [];
     setSending(true);
     setErr({});
-    try { await onSubmit(draft, proof, grandTotal, extras); }
+    try {
+      await onSubmit(draft, proof, grandTotal, extras);
+      // The order is placed; remembering the address is a courtesy, so a failure here only logs.
+      if (shipped && book && uid && draft.postalCode && draft.customer.address) {
+        const list = rememberAddress(saved ?? [], { postalCode: draft.postalCode, address: draft.customer.address }, Date.now(), confirmationCode);
+        book.save(uid, list).catch((e) => console.error('[shop] save address', e));
+      }
+    }
     catch (x) { console.error(x); setErr({ submit: 'Could not send your order. Check your connection and try again.' }); }
     finally { setSending(false); }
   };
@@ -160,12 +187,32 @@ export default function CheckoutModal({ catalog, choice, okLines, badLines, tota
       {shipped && (
         <fieldset>
           <legend>Shipping</legend>
+          {live && q.state !== 'signin' && uid && saved && saved.length > 0 && (
+            <fieldset className="shop-saved">
+              <legend>Saved addresses</legend>
+              <div className="shop-radios shop-saved-list" role="radiogroup" aria-label="Saved addresses">
+                {saved.map((a) => (
+                  <label key={a.id} className={`shop-option ${chosenSaved?.id === a.id ? 'is-on' : ''}`}>
+                    <input type="radio" name="saved" checked={chosenSaved?.id === a.id} onChange={() => pickSaved(a)} />
+                    <b>{a.postalCode}</b>
+                    <span>{a.address}</span>
+                    <button type="button" className="shop-link shop-saved-forget" onClick={(e) => { e.preventDefault(); e.stopPropagation(); forget(a); }}>Forget</button>
+                  </label>
+                ))}
+                <label className={`shop-option ${!chosenSaved ? 'is-on' : ''}`}>
+                  <input type="radio" name="saved" checked={!chosenSaved} onChange={() => pickSaved(null)} />
+                  <b>New address</b>
+                </label>
+              </div>
+            </fieldset>
+          )}
           <ShopShipping q={q} live={live} currency={currency} error={err.ship} onPostal={setPostal} />
           {(q.state !== 'signin' || !live) && (
             <div className="shop-field">
               <label htmlFor="shop-address">Shipping address</label>
               <textarea id="shop-address" rows={3} value={state.address} onChange={(e) => patch({ address: e.target.value })} aria-invalid={!!err.address} placeholder="Street and number, RT/RW, kelurahan, kecamatan, city" autoComplete="street-address" />
               {err.address && <span className="shop-error">{err.address}</span>}
+              {book && uid && <span className="shop-hint">We remember this address for your next order. You can forget it any time.</span>}
             </div>
           )}
           <p className="shop-hint">{shipRule(kind)}</p>

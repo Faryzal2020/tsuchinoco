@@ -219,6 +219,11 @@
 .shop-review-block p { margin: 6px 0 0; }
 .shop-review-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
 .shop-review-head h3 { margin: 0; font-size: 15px; font-weight: 700; }
+.shop-saved { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gap: 8px; }
+.shop-saved legend { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+.shop-saved-list { grid-template-columns: minmax(0, 1fr); }
+.shop-saved .shop-option span { white-space: pre-wrap; }
+.shop-saved-forget { justify-self: start; font-size: 13px; margin-top: 4px; }
 
 .shop-thanks { background: var(--s-surface); border: var(--s-bw) solid var(--s-line); border-radius: var(--s-radius); padding: 22px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; max-width: 640px; }
 .shop-code-label { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--s-ink-2); }
