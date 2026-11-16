@@ -224,6 +224,21 @@
 .shop-saved-list { grid-template-columns: minmax(0, 1fr); }
 .shop-saved .shop-option span { white-space: pre-wrap; }
 .shop-saved-forget { justify-self: start; font-size: 13px; margin-top: 4px; }
+.shop-signedin { margin: 0; font-size: 14px; background: var(--s-blue-soft); border-radius: var(--s-r-sm); padding: 8px 12px; }
+.shop-signedin span { color: var(--s-ink-2); }
+.shop-save-address { margin-top: 4px; font-size: 14px; }
+/* A "?" that explains itself on hover or focus; the text is also the aria-label. */
+.shop-tip { position: relative; display: inline-grid; place-items: center; width: 18px; height: 18px; margin-left: 6px; border: 1.5px solid var(--s-ink-2); border-radius: 50%; font: 700 11px/1 var(--s-sans); color: var(--s-ink-2); cursor: help; }
+.shop-tip::after { content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); width: max-content; max-width: min(280px, 80vw); padding: 8px 10px; font: 400 13px/1.4 var(--s-sans); color: var(--s-surface); background: var(--s-ink); border-radius: var(--s-r-sm); white-space: normal; opacity: 0; pointer-events: none; transition: opacity .12s; z-index: 2; }
+.shop-tip:hover::after, .shop-tip:focus-visible::after { opacity: 1; }
+/* The receipt card: a clear button for the file dialog, the chosen name beside it. */
+.shop-receipt { border: 1.5px solid var(--s-line); border-radius: var(--s-r-sm); padding: 12px 14px; display: grid; gap: 10px; }
+.shop-receipt-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 10px; }
+.shop-receipt-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.shop-file-btn { display: inline-flex; align-items: center; cursor: pointer; }
+.shop-file-btn input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+.shop-file-btn:focus-within { outline: 2px solid var(--s-blue); outline-offset: 2px; }
+.shop-receipt-name { display: inline-flex; align-items: center; gap: 10px; font-size: 14px; overflow-wrap: anywhere; }
 
 .shop-thanks { background: var(--s-surface); border: var(--s-bw) solid var(--s-line); border-radius: var(--s-radius); padding: 22px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; max-width: 640px; }
 .shop-code-label { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--s-ink-2); }

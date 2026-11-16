@@ -273,6 +273,7 @@ On `/shop/` the bottom cart bar is replaced by a cart panel that stays beside th
 ## Later and undecided
 
 - Customer-choice bundles ("any 3 keychains") on the form. Needs a decision on the data model first.
+- International shipping. The shop ships within Indonesia only; the hook is the postcode block in `ShopShipping` (`src/components/shop/parts.tsx`), where a country choice and a courier that ships abroad would go, plus a quote path in `quoteShipping`.
 - Spam protection stronger than anonymous sign-in plus honeypot: Firebase App Check with reCAPTCHA v3. Verify it is available on the current plan before relying on it.
 - Customer self-service: a link to view or edit a submission before the batch closes.
 - Catalogue list and offering picker showing thumbnails.

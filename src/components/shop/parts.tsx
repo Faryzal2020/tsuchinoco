@@ -49,9 +49,12 @@ export function ShopShipping({ q, live, currency, error, onPostal = q.setPostal 
   }
   return (
     <div className="shop-shipping">
+      {/* Domestic only for now: the postcode drives a Lion Parcel quote within Indonesia. International
+          orders would plug in here (a country choice before the postcode, and a courier that ships abroad). */}
       <div className="shop-field shop-postcode">
         <label htmlFor="shop-postcode">Postcode</label>
         <input id="shop-postcode" inputMode="numeric" autoComplete="postal-code" maxLength={5} placeholder="e.g. 16920" value={q.postal} onChange={(e) => onPostal(e.target.value)} aria-invalid={q.state === 'postcode' && !!error} />
+        <span className="shop-hint">We ship within Indonesia only.</span>
       </div>
       {q.state === 'loading' && <p className="shop-hint" aria-live="polite">Checking Lion Parcel prices…</p>}
       {q.state === 'none' && <p className="shop-error">Lion Parcel does not deliver to this postcode. Check it, or contact us.</p>}

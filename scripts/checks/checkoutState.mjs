@@ -9,6 +9,9 @@ assert.deepEqual(m.stepsFor('preorder'), ['fulfilment', 'details', 'review', 'pa
 assert.deepEqual(m.stepsFor('mail_order'), ['details', 'review', 'payment']);
 const pre = m.emptyCheckout('store_cf24_1', 'preorder', 'Bank transfer');
 assert.equal(pre.step, 'fulfilment'); assert.equal(pre.fulfilment, 'pickup'); assert.equal(pre.pay, 'Bank transfer'); assert.equal(pre.open, false);
+assert.equal(pre.saveAddress, true);
+// A state stored before the save-address choice existed reads back with it on.
+{ const legacy = kv(); const { saveAddress: _s, ...withoutFlag } = { ...pre, open: true }; legacy.setItem(m.CHECKOUT_KEY, JSON.stringify(withoutFlag)); const r = m.readCheckout(legacy, 'store_cf24_1', 'preorder', 'Bank transfer'); assert.equal(r.saveAddress, true); assert.equal(r.open, true); legacy.setItem(m.CHECKOUT_KEY, JSON.stringify({ ...pre, saveAddress: false })); assert.equal(m.readCheckout(legacy, 'store_cf24_1', 'preorder', 'Bank transfer').saveAddress, false); }
 const mo = m.emptyCheckout('store_mail', 'mail_order', 'QRIS');
 assert.equal(mo.step, 'details'); assert.equal(mo.fulfilment, 'mail');
 

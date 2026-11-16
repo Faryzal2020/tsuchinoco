@@ -97,9 +97,11 @@ export default function CheckoutModal({ catalog, choice, okLines, badLines, tota
   const grandTotal = total + (shipped ? q.extra : 0);
   // A shipping problem that only shows once the quote is back is a banner on the later steps, never a silent jump.
   const shipIssue = shipped && q.state !== 'loading' ? shippingProblem(q, live) : '';
+  // A shipping error flagged by Continue follows the live state: it clears itself once the customer
+  // signs in or the quote is ready, instead of lingering as a stale sentence.
+  const shipError = err.ship ? (shippingProblem(q, live) || undefined) : undefined;
 
   const dialog = useRef<HTMLDialogElement>(null);
-  const openedOnPayment = useRef(state.step === 'payment');
   useEffect(() => {
     const d = dialog.current;
     if (d && !d.open) d.showModal();
@@ -110,6 +112,9 @@ export default function CheckoutModal({ catalog, choice, okLines, badLines, tota
     if (clamped !== state.step) patch({ step: clamped });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // A field's error goes away as soon as the customer types in it; Continue re-checks everything.
+  const clearErr = (k: string) => setErr((e) => { if (!(k in e)) return e; const n = { ...e }; delete n[k]; return n; });
+  const set = <K extends keyof CheckoutState>(k: K, v: CheckoutState[K]) => { patch({ [k]: v } as Partial<CheckoutState>); clearErr(k); };
   const go = (s: StepId) => { setErr({}); patch({ step: s }); };
   const close = () => patch({ open: false });
   const next = () => {
@@ -147,7 +152,7 @@ export default function CheckoutModal({ catalog, choice, okLines, badLines, tota
       await onSubmit(draft, proof, grandTotal, extras);
       // The order is placed; remembering the address is a courtesy, so a failure here only logs.
       // The book is read again right before the write, so a failed earlier read cannot wipe it.
-      if (shipped && book && uid && draft.postalCode && draft.customer.address) {
+      if (shipped && state.saveAddress && book && uid && draft.postalCode && draft.customer.address) {
         rememberInBook(book, uid, { postalCode: draft.postalCode, address: draft.customer.address }, Date.now(), confirmationCode)
           .catch((e) => console.error('[shop] save address', e));
       }
@@ -172,13 +177,13 @@ export default function CheckoutModal({ catalog, choice, okLines, badLines, tota
     <>
       <fieldset>
         <legend>Your details</legend>
-        <Text id="shop-name" label="Name" value={state.name} onChange={(v) => patch({ name: v })} error={err.name} autoComplete="name" />
-        <Text id="shop-email" label="E-mail" type="email" value={state.email} onChange={(v) => patch({ email: v })} error={err.email} autoComplete="email" />
-        <Text id="shop-phone" label="Phone (WhatsApp preferred)" type="tel" value={state.phone} onChange={(v) => patch({ phone: v })} error={err.phone} autoComplete="tel" />
+        <Text id="shop-name" label="Name" value={state.name} onChange={(v) => set('name', v)} error={err.name} autoComplete="name" />
+        <Text id="shop-email" label="E-mail" type="email" value={state.email} onChange={(v) => set('email', v)} error={err.email} autoComplete="email" />
+        <Text id="shop-phone" label="Phone (WhatsApp preferred)" type="tel" value={state.phone} onChange={(v) => set('phone', v)} error={err.phone} autoComplete="tel" />
         {checks.needDay && (
           <div className="shop-field">
             <label htmlFor="shop-day">Pick-up day</label>
-            <select id="shop-day" value={state.day} onChange={(e) => patch({ day: e.target.value })} aria-invalid={!!err.day}>
+            <select id="shop-day" value={state.day} onChange={(e) => set('day', e.target.value)} aria-invalid={!!err.day}>
               <option value="">Choose a day</option>
               {days.map((d) => <option key={d} value={d}>{d}</option>)}
             </select>
@@ -189,6 +194,9 @@ export default function CheckoutModal({ catalog, choice, okLines, badLines, tota
       {shipped && (
         <fieldset>
           <legend>Shipping</legend>
+          {live && deps?.customer && (
+            <p className="shop-signedin">Signed in as <b>{deps.customer.name || deps.customer.email}</b>{deps.customer.name && <span> · {deps.customer.email}</span>}</p>
+          )}
           {live && q.state !== 'signin' && uid && saved && saved.length > 0 && (
             <fieldset className="shop-saved">
               <legend>Saved addresses</legend>
@@ -208,13 +216,19 @@ export default function CheckoutModal({ catalog, choice, okLines, badLines, tota
               </div>
             </fieldset>
           )}
-          <ShopShipping q={q} live={live} currency={currency} error={err.ship} onPostal={setPostal} />
+          <ShopShipping q={q} live={live} currency={currency} error={shipError} onPostal={setPostal} />
           {(q.state !== 'signin' || !live) && (
             <div className="shop-field">
               <label htmlFor="shop-address">Shipping address</label>
-              <textarea id="shop-address" rows={3} value={state.address} onChange={(e) => patch({ address: e.target.value })} aria-invalid={!!err.address} placeholder="Street and number, RT/RW, kelurahan, kecamatan, city" autoComplete="street-address" />
+              <textarea id="shop-address" rows={3} value={state.address} onChange={(e) => set('address', e.target.value)} aria-invalid={!!err.address} placeholder="Street and number, RT/RW, kelurahan, kecamatan, city" autoComplete="street-address" />
               {err.address && <span className="shop-error">{err.address}</span>}
-              {book && uid && <span className="shop-hint">We remember this address for your next order. You can forget it any time.</span>}
+              {book && uid && (
+                <label className="shop-check shop-save-address">
+                  <input type="checkbox" checked={state.saveAddress} onChange={(e) => patch({ saveAddress: e.target.checked })} />
+                  Save this address
+                  <span className="shop-tip" tabIndex={0} role="note" aria-label="Saved addresses are offered again at your next order, signed in with the same Google account. You can forget one any time." data-tip="Saved addresses are offered again at your next order, signed in with the same Google account. You can forget one any time.">?</span>
+                </label>
+              )}
             </div>
           )}
           <p className="shop-hint">{shipRule(kind)}</p>
@@ -269,11 +283,20 @@ export default function CheckoutModal({ catalog, choice, okLines, badLines, tota
         <label className="shop-option is-disabled"><input type="radio" name="pay" disabled /><b>Online payment</b><span>Coming soon</span></label>
       </div>
       {catalog.paymentText && <p className="shop-paytext">{catalog.paymentText}</p>}
-      <div className="shop-field">
-        <label htmlFor="shop-proof">Receipt</label>
-        <input id="shop-proof" type="file" accept="image/*,application/pdf" onChange={(e) => setProof(e.target.files?.[0] ?? null)} />
-        <span className="shop-hint">{isPre ? 'Preorders must be paid before the event.' : 'We ship after the payment is confirmed.'} JPG, PNG or PDF, up to 10 MB.</span>
-        {!proof && <span className="shop-hint">{openedOnPayment.current ? 'Choose your receipt again; files cannot be kept across a reload.' : 'Upload your transfer receipt to place the order.'}</span>}
+      <div className="shop-receipt">
+        <div className="shop-receipt-head">
+          <b>Receipt</b>
+          <span className="shop-hint">JPG, PNG or PDF, up to 10 MB.</span>
+        </div>
+        <div className="shop-receipt-row">
+          <label className="shop-btn shop-file-btn">
+            {proof ? 'Change file' : 'Choose file'}
+            <input id="shop-proof" type="file" accept="image/*,application/pdf" onChange={(e) => setProof(e.target.files?.[0] ?? null)} />
+          </label>
+          {proof
+            ? <span className="shop-receipt-name">{proof.name}<button type="button" className="shop-link" onClick={() => setProof(null)}>Remove</button></span>
+            : <span className="shop-hint">Upload your transfer receipt to place the order.</span>}
+        </div>
       </div>
       <div className="shop-total"><span>Total</span><span className="shop-money">{formatMoney(grandTotal, currency)}</span></div>
     </fieldset>

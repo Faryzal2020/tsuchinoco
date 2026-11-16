@@ -24,6 +24,8 @@ export interface CheckoutState {
   pay: string;
   /** Whether the checkout modal is showing. */
   open: boolean;
+  /** Shipped orders: remember the address in the customer's book after the order is placed. On by default. */
+  saveAddress: boolean;
 }
 
 export const CHECKOUT_KEY = 'tsu.shop.checkout';
@@ -40,7 +42,7 @@ export function stepsFor(kind: OrderType): StepId[] {
 export function emptyCheckout(laneId: string, kind: OrderType, defaultPay: string): CheckoutState {
   return {
     laneId, step: stepsFor(kind)[0], fulfilment: kind === 'preorder' ? 'pickup' : 'mail',
-    name: '', email: '', phone: '', day: '', notes: '', postal: '', address: '', service: '', pay: defaultPay, open: false,
+    name: '', email: '', phone: '', day: '', notes: '', postal: '', address: '', service: '', pay: defaultPay, open: false, saveAddress: true,
   };
 }
 
@@ -59,7 +61,8 @@ export function readCheckout(kv: KV | undefined, laneId: string, kind: OrderType
     if (typeof s.open !== 'boolean') return empty;
     if (s.fulfilment !== 'pickup' && s.fulfilment !== 'mail') return empty;
     if (!stepsFor(kind).includes(s.step as StepId)) return empty;
-    const out: CheckoutState = { ...empty, open: s.open, fulfilment: s.fulfilment, step: s.step as StepId };
+    // saveAddress arrived later; a state stored without it keeps the default.
+    const out: CheckoutState = { ...empty, open: s.open, fulfilment: s.fulfilment, step: s.step as StepId, saveAddress: typeof s.saveAddress === 'boolean' ? s.saveAddress : true };
     for (const k of STRINGS) out[k] = s[k] as string;
     return out;
   } catch {
